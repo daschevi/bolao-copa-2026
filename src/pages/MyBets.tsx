@@ -1,0 +1,113 @@
+import { useMemo } from 'react';
+import { useAuthStore } from '../store/authStore';
+import { useBetsStore } from '../store/betsStore';
+import { useTournamentStore } from '../store/tournamentStore';
+import { TEAMS_BY_ID } from '../data/teams';
+import { calcPoints } from '../types';
+
+export function MyBets() {
+  const { profile } = useAuthStore();
+  const { getUserBets } = useBetsStore();
+  const { matches } = useTournamentStore();
+
+  const userBets = useMemo(() => profile ? getUserBets(profile.id) : [], [profile, getUserBets]);
+
+  const stats = useMemo(() => {
+    let total = 0, exact = 0, correct = 0;
+    userBets.forEach(b => {
+      const m = matches[b.matchId];
+      if (!m?.played) return;
+      const pts = calcPoints(b, m);
+      total += pts;
+      if (pts === 3) exact++;
+      if (pts >= 1) correct++;
+    });
+    return { total, exact, correct };
+  }, [userBets, matches]);
+
+  if (!profile) return <div className="text-center py-20 text-gray-400">Faça login para ver seus palpites.</div>;
+
+  const pending = userBets.filter(b => !matches[b.matchId]?.played);
+  const finished = userBets.filter(b => matches[b.matchId]?.played);
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      <h1 className="text-2xl font-bold text-white mb-4">Meus Palpites</h1>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        {[
+          { label: 'Pontos', value: stats.total, color: 'text-copa-gold' },
+          { label: 'Placar Exato', value: stats.exact, color: 'text-green-400' },
+          { label: 'Acertos', value: stats.correct, color: 'text-yellow-400' },
+        ].map(s => (
+          <div key={s.label} className="card text-center">
+            <div className={`text-3xl font-bold ${s.color}`}>{s.value}</div>
+            <div className="text-xs text-gray-400 mt-1">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {userBets.length === 0 && (
+        <div className="card text-center text-gray-400 py-8">Você ainda não fez nenhum palpite. Acesse a aba Grupos para começar!</div>
+      )}
+
+      {finished.length > 0 && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold text-white mb-3">Jogos Encerrados</h2>
+          <div className="space-y-2">
+            {finished.map(b => {
+              const m = matches[b.matchId];
+              const homeTeam = m.homeTeamId ? TEAMS_BY_ID[m.homeTeamId] : null;
+              const awayTeam = m.awayTeamId ? TEAMS_BY_ID[m.awayTeamId] : null;
+              const pts = calcPoints(b, m);
+              const ptsColor = pts === 3 ? 'text-green-400 bg-green-900/30' : pts === 1 ? 'text-yellow-400 bg-yellow-900/30' : 'text-red-400 bg-red-900/30';
+              return (
+                <div key={b.matchId} className="card flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span>{homeTeam?.flag ?? '🏳️'}</span>
+                    <span className="text-xs text-gray-300 truncate">{homeTeam?.shortName ?? 'TBD'}</span>
+                    <span className="font-bold text-white text-sm">{m.homeScore}–{m.awayScore}</span>
+                    <span className="text-xs text-gray-300 truncate">{awayTeam?.shortName ?? 'TBD'}</span>
+                    <span>{awayTeam?.flag ?? '🏳️'}</span>
+                  </div>
+                  <div className="text-xs text-gray-500 shrink-0">
+                    Palpite: {b.homeScore}×{b.awayScore}
+                  </div>
+                  <div className={`text-sm font-bold px-2 py-0.5 rounded ${ptsColor} shrink-0`}>
+                    +{pts}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {pending.length > 0 && (
+        <section>
+          <h2 className="text-lg font-semibold text-white mb-3">Palpites Pendentes ({pending.length})</h2>
+          <div className="space-y-2">
+            {pending.map(b => {
+              const m = matches[b.matchId];
+              const homeTeam = m.homeTeamId ? TEAMS_BY_ID[m.homeTeamId] : null;
+              const awayTeam = m.awayTeamId ? TEAMS_BY_ID[m.awayTeamId] : null;
+              return (
+                <div key={b.matchId} className="card flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span>{homeTeam?.flag ?? '🏳️'}</span>
+                    <span className="text-xs text-gray-300 truncate">{homeTeam?.shortName ?? 'TBD'}</span>
+                    <span className="text-gray-500 text-sm">vs</span>
+                    <span className="text-xs text-gray-300 truncate">{awayTeam?.shortName ?? 'TBD'}</span>
+                    <span>{awayTeam?.flag ?? '🏳️'}</span>
+                  </div>
+                  <div className="text-sm font-medium text-copa-gold shrink-0">{b.homeScore}×{b.awayScore}</div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
