@@ -4,26 +4,44 @@ import { useBetsStore } from '../store/betsStore';
 import { supabase, isSupabaseConfigured, sq } from '../lib/supabase';
 import type { Profile, LeaderboardEntry } from '../types/index';
 
+const PROFILES_CACHE = 'bolao-profiles-cache';
+
+/**
+ * Computa o ranking só com o que já está em memória/localStorage.
+ * Função plain (não-hook) para poder ser chamada do lazy initializer do
+ * useState — evita o anti-pattern de setState dentro do useEffect inicial.
+ */
+function computeFromLocalCache(
+  profile: Profile | null,
+  getLeaderboard: (profiles: Profile[]) => LeaderboardEntry[],
+): LeaderboardEntry[] {
+  let profiles: Profile[] = [];
+  try {
+    const cached = localStorage.getItem(PROFILES_CACHE);
+    if (cached) profiles = JSON.parse(cached);
+  } catch { /* ignore */ }
+  if (!profiles.length && profile) profiles = [profile];
+  return getLeaderboard(profiles);
+}
+
 export function Leaderboard() {
   const { profile } = useAuthStore();
   const { getLeaderboard, fetchAllBets } = useBetsStore();
-  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+
+  // Lazy initial: mostra o cache de cara no primeiro render, sem precisar de
+  // setState dentro do useEffect (que disparava cascading render).
+  const [entries, setEntries] = useState<LeaderboardEntry[]>(
+    () => computeFromLocalCache(profile, getLeaderboard)
+  );
   const [loading, setLoading] = useState(false);   // falso por padrão — mostra cache na hora
   const [refreshing, setRefreshing] = useState(false); // spinner discreto no botão
   const mountedRef = useRef(true);
 
-  const PROFILES_CACHE = 'bolao-profiles-cache';
-
-  /** Computa o ranking com o que já está em memória (sem nenhuma query). */
-  const computeFromCache = useCallback(() => {
-    let profiles: Profile[] = [];
-    try {
-      const cached = localStorage.getItem(PROFILES_CACHE);
-      if (cached) profiles = JSON.parse(cached);
-    } catch { /* ignore */ }
-    if (!profiles.length && profile) profiles = [profile];
-    return getLeaderboard(profiles);
-  }, [profile, getLeaderboard]);
+  /** Re-computa o ranking a partir do cache (usado em ações de UI futuras). */
+  const computeFromCache = useCallback(
+    () => computeFromLocalCache(profile, getLeaderboard),
+    [profile, getLeaderboard],
+  );
 
   /** Busca dados frescos em background e atualiza silenciosamente. */
   const refresh = useCallback(async (showFullLoader = false) => {
@@ -71,21 +89,21 @@ export function Leaderboard() {
   useEffect(() => {
     mountedRef.current = true;
 
-    // 1. Mostra cache imediatamente (zero espera)
-    const cached = computeFromCache();
-    if (cached.length > 0) {
-      setEntries(cached);
-      // Atualiza em background sem mostrar loading
-      refresh(false);
-    } else {
-      // Sem cache: mostra spinner e espera
-      refresh(true);
-    }
+    // Cache já foi aplicado no lazy initializer do useState — aqui só
+    // disparamos o refresh, deferido via microtask para sair do tick síncrono
+    // do effect (evita cascading render e satisfaz `react-hooks/set-state-in-effect`).
+    const showFullLoader = entries.length === 0;
+    queueMicrotask(() => {
+      if (mountedRef.current) refresh(showFullLoader);
+    });
 
     return () => { mountedRef.current = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const medal = (i: number) => ['🥇', '🥈', '🥉'][i] ?? `${i + 1}º`;
+
+  // Suprime warnings de variável não usada se o futuro nos pedir computeFromCache
+  void computeFromCache;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">

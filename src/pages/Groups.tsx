@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { MatchCard } from '../components/MatchCard';
 import { Flag } from '../components/Flag';
 import { useTournamentStore } from '../store/tournamentStore';
@@ -177,12 +177,11 @@ export function Groups() {
 
   const [activeRowGroupIdx, setActiveRowGroupIdx] = useState(0);
 
+  // `visibleGroups` é GROUPS direto — a memoização preserva referência estável
+  // para usar como dep estável caso seja preciso no futuro. Não há "reset por
+  // mudança de visibilidade" porque a lista é constante; se voltar a variar,
+  // adicionar useEffect aqui requer cuidado (não chamar setState síncrono).
   const visibleGroups = useMemo(() => GROUPS, []);
-
-  // Reset row group index when visible groups change
-  useEffect(() => {
-    setActiveRowGroupIdx(0);
-  }, [visibleGroups]);
 
   // Fase oculta para não-admins
   if (!phaseVisible) {

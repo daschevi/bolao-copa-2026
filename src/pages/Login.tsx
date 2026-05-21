@@ -15,8 +15,10 @@ function GoogleIcon() {
 export function Login() {
   const { loginWithGoogle, loading, error, clearError } = useAuthStore();
 
-  // Limpa erro anterior ao montar
-  useEffect(() => { clearError(); }, []);
+  // Limpa erro anterior ao montar.
+  // `clearError` é uma action do Zustand — ref estável entre renders, então
+  // incluir nas deps não causa re-execução; só deixa o eslint feliz.
+  useEffect(() => { clearError(); }, [clearError]);
 
   const handleGoogle = async () => {
     clearError();

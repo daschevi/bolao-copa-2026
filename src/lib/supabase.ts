@@ -12,7 +12,6 @@ export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabas
  * Wrapper que adiciona timeout a qualquer query do Supabase.
  * Evita travamento infinito quando o PostgREST está lento ou com conexões presas.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function sq(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryBuilder: PromiseLike<{ data: any; error: any }>,
