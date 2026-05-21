@@ -106,6 +106,11 @@ function sameTarget(a: OutboxOp, b: OutboxOp): boolean {
  * ficar até MAX_ATTEMPTS poluindo rede, logs e localStorage.
  *
  * Exemplos: coluna inexistente, tabela não criada, violação de RLS, schema cache miss.
+ *
+ * ⚠️ NÃO incluir aqui códigos transitórios. Em particular:
+ *   - PGRST301 = "JWT expired" → transitório (basta usuário re-logar; reconciliação
+ *     do fetchAllBets cobre bets, e ops na outbox vão drenar quando a sessão voltar)
+ *   - PGRST116 = "0 rows when expecting one" → contexto de leitura, não de write
  */
 function isPermanentError(msg: string): boolean {
   const m = (msg ?? '').toLowerCase();
@@ -114,7 +119,7 @@ function isPermanentError(msg: string): boolean {
       || /row-level security/.test(m)
       || /violates row-level security/.test(m)
       || /pgrst204/.test(m)   // schema cache miss
-      || /pgrst301/.test(m);  // singular violation
+      || /pgrst104/.test(m);  // singularity violation (múltiplas rows onde esperava uma)
 }
 
 function enqueueOutbox(input: OutboxOpInput): string {
@@ -214,8 +219,9 @@ export async function persistOp(
     }
   }
   bumpAttempts(id);
-  console.error(`[${label}] retries esgotados — op permanece na outbox para próxima sync`);
-  onError?.('Falha ao salvar no servidor. Será re-tentado automaticamente.');
+  const reason = lastErrorMsg || 'sem detalhe';
+  console.error(`[${label}] retries esgotados (${reason}) — op permanece na outbox para próxima sync`);
+  onError?.(`Falha ao salvar no servidor${lastErrorMsg ? `: ${lastErrorMsg}` : ''}. Será re-tentado automaticamente.`);
 }
 
 /**
