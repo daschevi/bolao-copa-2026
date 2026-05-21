@@ -100,6 +100,23 @@ function sameTarget(a: OutboxOp, b: OutboxOp): boolean {
   return false;
 }
 
+/**
+ * Erros permanentes: re-tentar nunca vai resolver.
+ * Nesses casos a op deve ser descartada da outbox imediatamente em vez de
+ * ficar até MAX_ATTEMPTS poluindo rede, logs e localStorage.
+ *
+ * Exemplos: coluna inexistente, tabela não criada, violação de RLS, schema cache miss.
+ */
+function isPermanentError(msg: string): boolean {
+  const m = (msg ?? '').toLowerCase();
+  return /column .* does not exist/.test(m)
+      || /relation .* does not exist/.test(m)
+      || /row-level security/.test(m)
+      || /violates row-level security/.test(m)
+      || /pgrst204/.test(m)   // schema cache miss
+      || /pgrst301/.test(m);  // singular violation
+}
+
 function enqueueOutbox(input: OutboxOpInput): string {
   const op: OutboxOp = { ...input, id: genId(), attempts: 0, createdAt: Date.now() };
   const ops = readOutbox();
@@ -162,6 +179,7 @@ export async function persistOp(
   const id = enqueueOutbox(input);
   const label = input.label;
 
+  let lastErrorMsg = '';
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const result = await Promise.race([
@@ -176,8 +194,17 @@ export async function persistOp(
         onSuccess?.();
         return;
       }
-      console.warn(`[${label}] tentativa ${attempt}/${retries}:`, result.error.message);
+      lastErrorMsg = result.error.message;
+      // Erro permanente: re-tentar não vai resolver — descarta imediatamente
+      if (isPermanentError(lastErrorMsg)) {
+        removeFromOutbox(id);
+        console.error(`[${label}] erro permanente, descartando da outbox:`, lastErrorMsg);
+        onError?.(lastErrorMsg);
+        return;
+      }
+      console.warn(`[${label}] tentativa ${attempt}/${retries}:`, lastErrorMsg);
     } catch (e) {
+      lastErrorMsg = String(e);
       console.warn(`[${label}] tentativa ${attempt}/${retries} exceção:`, e);
     }
     if (attempt < retries) {
@@ -220,6 +247,10 @@ export async function drainOutbox(): Promise<void> {
         if (!result.error) {
           removeFromOutbox(op.id);
           console.log(`[outbox:${op.label}] reenviado com sucesso`);
+        } else if (isPermanentError(result.error.message)) {
+          // Erro permanente: re-tentar nunca vai resolver — descarta agora
+          removeFromOutbox(op.id);
+          console.error(`[outbox:${op.label}] erro permanente, descartando:`, result.error.message);
         } else {
           bumpAttempts(op.id);
           console.warn(`[outbox:${op.label}] ainda falha:`, result.error.message);

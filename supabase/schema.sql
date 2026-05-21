@@ -29,6 +29,16 @@ create table public.match_results (
   away_score integer not null,
   home_penalties integer,
   away_penalties integer,
+  home_team_id text,
+  away_team_id text,
+  updated_at timestamptz default now()
+);
+
+-- Phase settings (admin only — visibility and bet deadlines per stage)
+create table public.phase_settings (
+  stage text primary key,
+  visible boolean not null default true,
+  bets_deadline timestamptz,
   updated_at timestamptz default now()
 );
 
@@ -36,6 +46,7 @@ create table public.match_results (
 alter table public.profiles enable row level security;
 alter table public.bets enable row level security;
 alter table public.match_results enable row level security;
+alter table public.phase_settings enable row level security;
 
 -- Profiles: anyone can read, only self can write
 create policy "profiles_select" on public.profiles for select using (true);
@@ -54,5 +65,15 @@ create policy "results_insert" on public.match_results for insert
 create policy "results_update" on public.match_results for update
   using (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
 
+-- Phase settings: anyone can read, only admins can write
+create policy "phase_settings_select" on public.phase_settings for select using (true);
+create policy "phase_settings_write"  on public.phase_settings for all
+  using      (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true))
+  with check (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
+
 -- Make the first registered user an admin (run manually after first signup):
 -- update public.profiles set is_admin = true where id = '<user-uuid>';
+
+-- Migration: add team columns to existing match_results table (run if table already exists):
+-- alter table public.match_results add column if not exists home_team_id text;
+-- alter table public.match_results add column if not exists away_team_id text;
