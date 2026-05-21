@@ -33,9 +33,20 @@ const INITIAL_PHASES: Record<StageKey, PhaseConfig> = Object.fromEntries(
 
 interface PhaseSettingsState {
   phases: Record<StageKey, PhaseConfig>;
-  /** Atualiza config de uma fase localmente (sem salvar no Supabase). */
+  /**
+   * Atualiza config de uma fase APENAS LOCALMENTE — NÃO persiste no Supabase.
+   *
+   * Esta função é deliberadamente local-only para suportar o padrão "rascunho"
+   * do PhaseSettingsModal: o admin edita várias fases e só clica em "Salvar"
+   * uma vez, que dispara `savePhaseSettings()` para enviar tudo de uma vez.
+   *
+   * ⚠️ Se você chamar `updatePhase` de um novo lugar, GARANTA que
+   * `savePhaseSettings()` será chamado antes do componente desmontar — caso
+   * contrário a mudança é perdida no próximo `syncPhaseSettings` (que vem do
+   * BD e sobrescreve o estado local).
+   */
   updatePhase: (stage: StageKey, cfg: Partial<PhaseConfig>) => void;
-  /** Persiste todas as fases no Supabase. */
+  /** Persiste todas as fases no Supabase. Chame após uma série de updatePhase. */
   savePhaseSettings: () => Promise<{ error: string | null }>;
   /** Busca configurações do Supabase e sobrescreve o estado local. */
   syncPhaseSettings: () => Promise<void>;

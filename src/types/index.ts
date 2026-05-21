@@ -59,6 +59,13 @@ export interface Bet {
   homePenalties?: number | null;
   awayPenalties?: number | null;
   points?: number | null;
+  /**
+   * Flag local apenas — true enquanto a escrita no Supabase não confirmou.
+   * Quando true, `fetchAllBets` NÃO sobrescreve esta bet com a versão do BD
+   * (que ainda não a tem). Limpada pelo callback de sucesso do `persistOp`.
+   * Nunca é enviada ao Supabase.
+   */
+  pendingPersist?: boolean;
 }
 
 export interface LeaderboardEntry {

@@ -174,9 +174,35 @@ export const useAuthStore = create<AuthState>()(
       logout: async () => {
         set({ profile: null, loading: false, error: null });
         if (isSupabaseConfigured) {
-          try { await supabase.auth.signOut(); } catch (_) { /* ignora */ }
+          try { await supabase.auth.signOut(); } catch { /* ignora */ }
         }
-        localStorage.removeItem('bolao-auth');
+        // Limpa TODO o cache local — em PCs compartilhados, deixar bets/configs
+        // de um usuário no localStorage vaza dado privado para o próximo login
+        // e contamina o leaderboard até o fetchAllBets resolver.
+        // Inclui a outbox: ops pendentes do usuário anterior seriam barradas
+        // pelo RLS do próximo usuário e gerariam ruído nos logs.
+        [
+          'bolao-auth',
+          'bolao-bets',
+          'bolao-tournament-v2',
+          'bolao-phase-settings',
+          'bolao-outbox-v1',
+        ].forEach(k => localStorage.removeItem(k));
+        // Reseta os stores em memória que dependem do usuário.
+        // (tournamentStore é dado público — será reidratado pelo próximo sync)
+        try {
+          // Imports dinâmicos para evitar dependência circular com os stores
+          // que importam o authStore.
+          const { useBetsStore } = await import('./betsStore');
+          const { usePhaseSettingsStore, STAGE_KEYS } = await import('./phaseSettingsStore');
+          useBetsStore.setState({ bets: {} });
+          const initial = Object.fromEntries(
+            STAGE_KEYS.map(k => [k, { visible: true, betsDeadline: null }])
+          ) as ReturnType<typeof usePhaseSettingsStore.getState>['phases'];
+          usePhaseSettingsStore.setState({ phases: initial });
+        } catch (e) {
+          console.warn('[authStore] falha ao resetar stores no logout:', e);
+        }
       },
 
       clearError: () => set({ error: null }),

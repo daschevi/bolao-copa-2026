@@ -25,45 +25,216 @@ export async function sq(
   return Promise.race([queryBuilder as Promise<{ data: any; error: { message: string } | null }>, timeoutPromise]); // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Outbox persistente
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Toda operação de escrita (upsert/delete) é primeiro registrada no localStorage
+// e só removida da fila quando o Supabase confirmar success. Se o usuário fechar
+// o app, perder rede, ou o celular dormir antes do retry final, a operação fica
+// na outbox e é re-tentada no próximo `drainOutbox()` (chamado na inicialização
+// e a cada visibilitychange).
+//
+// Isso elimina a perda silenciosa de palpites/placares que acontecia quando o
+// `bgPersist` em memória esgotava as tentativas com o app já fechado.
+
+export type OutboxOp =
+  | {
+      id: string;
+      kind: 'upsert';
+      table: string;
+      payload: Record<string, unknown>;
+      onConflict: string;
+      label: string;
+      attempts: number;
+      createdAt: number;
+    }
+  | {
+      id: string;
+      kind: 'delete';
+      table: string;
+      match: { column: string; value: string | number };
+      label: string;
+      attempts: number;
+      createdAt: number;
+    };
+
+export type OutboxOpInput =
+  | Omit<Extract<OutboxOp, { kind: 'upsert' }>, 'id' | 'attempts' | 'createdAt'>
+  | Omit<Extract<OutboxOp, { kind: 'delete' }>, 'id' | 'attempts' | 'createdAt'>;
+
+const OUTBOX_KEY  = 'bolao-outbox-v1';
+const MAX_ATTEMPTS = 8;
+
+function genId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function readOutbox(): OutboxOp[] {
+  try {
+    const raw = localStorage.getItem(OUTBOX_KEY);
+    return raw ? (JSON.parse(raw) as OutboxOp[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOutbox(ops: OutboxOp[]): void {
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(ops));
+  } catch {
+    // Storage cheio ou indisponível — não pode quebrar a UI
+  }
+}
+
+/** Considera duas ops como "mesmo alvo" para deduplicação. */
+function sameTarget(a: OutboxOp, b: OutboxOp): boolean {
+  if (a.table !== b.table || a.kind !== b.kind) return false;
+  if (a.kind === 'delete' && b.kind === 'delete') {
+    return a.match.column === b.match.column && a.match.value === b.match.value;
+  }
+  if (a.kind === 'upsert' && b.kind === 'upsert' && a.onConflict === b.onConflict) {
+    const keys = a.onConflict.split(',').map(k => k.trim());
+    return keys.every(k => a.payload[k] === b.payload[k]);
+  }
+  return false;
+}
+
+function enqueueOutbox(input: OutboxOpInput): string {
+  const op: OutboxOp = { ...input, id: genId(), attempts: 0, createdAt: Date.now() };
+  const ops = readOutbox();
+  // Dedup: se já existe uma op para o mesmo alvo, substitui (a mais recente vence)
+  const idx = ops.findIndex(o => sameTarget(o, op));
+  if (idx >= 0) ops[idx] = op;
+  else ops.push(op);
+  writeOutbox(ops);
+  return op.id;
+}
+
+function removeFromOutbox(id: string): void {
+  const ops = readOutbox().filter(o => o.id !== id);
+  writeOutbox(ops);
+}
+
+function bumpAttempts(id: string): void {
+  const ops = readOutbox();
+  const idx = ops.findIndex(o => o.id === id);
+  if (idx >= 0) {
+    ops[idx] = { ...ops[idx], attempts: ops[idx].attempts + 1 };
+    writeOutbox(ops);
+  }
+}
+
+async function executeOp(op: OutboxOp): Promise<{ error: { message: string } | null }> {
+  if (!isSupabaseConfigured) return { error: { message: 'supabase não configurado' } };
+  if (op.kind === 'upsert') {
+    return supabase.from(op.table).upsert(op.payload, { onConflict: op.onConflict });
+  }
+  return supabase.from(op.table).delete().eq(op.match.column, op.match.value);
+}
+
 /**
- * Persiste uma operação no Supabase em background, sem bloquear a UI.
- * Tenta até `retries` vezes com backoff exponencial.
+ * Persiste uma operação no Supabase. Sempre passa pela outbox:
+ *   1. Enfileira em localStorage (escrita é durável a partir desse ponto)
+ *   2. Tenta executar com retry/backoff
+ *   3. Em sucesso, remove da outbox
+ *   4. Em falha, a op fica na outbox e é re-tentada por `drainOutbox()`
+ *      no próximo boot / visibilitychange / chamada explícita
+ *
  * Ideal para writes onde o estado local já foi atualizado de forma otimista.
  */
-export async function bgPersist(
-  fn: () => PromiseLike<{ error: { message: string } | null }>,
+export async function persistOp(
+  input: OutboxOpInput,
   {
     retries = 3,
     baseDelay = 2000,
-    label = 'bgPersist',
+    timeoutMs = 8000,
     onError,
+    onSuccess,
   }: {
     retries?: number;
     baseDelay?: number;
-    label?: string;
+    timeoutMs?: number;
     onError?: (msg: string) => void;
+    onSuccess?: () => void;
   } = {}
 ): Promise<void> {
+  const id = enqueueOutbox(input);
+  const label = input.label;
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const result = await Promise.race([
-        fn() as Promise<{ error: { message: string } | null }>,
+        executeOp({ ...input, id, attempts: attempt, createdAt: Date.now() } as OutboxOp),
         new Promise<{ error: { message: string } }>(r =>
-          setTimeout(() => r({ error: { message: 'timeout' } }), 8000)
+          setTimeout(() => r({ error: { message: 'timeout' } }), timeoutMs)
         ),
       ]);
       if (!result.error) {
+        removeFromOutbox(id);
         if (attempt > 1) console.log(`[${label}] sucesso na tentativa ${attempt}`);
+        onSuccess?.();
         return;
       }
-      console.warn(`[${label}] tentativa ${attempt}/${retries} falhou:`, result.error.message);
+      console.warn(`[${label}] tentativa ${attempt}/${retries}:`, result.error.message);
     } catch (e) {
-      console.warn(`[${label}] tentativa ${attempt}/${retries} lançou exceção:`, e);
+      console.warn(`[${label}] tentativa ${attempt}/${retries} exceção:`, e);
     }
     if (attempt < retries) {
       await new Promise(r => setTimeout(r, baseDelay * attempt));
     }
   }
-  console.error(`[${label}] todas as ${retries} tentativas falharam — dado salvo apenas localmente`);
-  onError?.('Falha ao salvar no servidor. Verifique a conexão e tente novamente.');
+  bumpAttempts(id);
+  console.error(`[${label}] retries esgotados — op permanece na outbox para próxima sync`);
+  onError?.('Falha ao salvar no servidor. Será re-tentado automaticamente.');
+}
+
+/**
+ * Drena a outbox: tenta re-enviar todas as ops pendentes uma vez cada.
+ * Chame na inicialização do app, em visibilitychange e após reconexão.
+ * Não bloqueia — é seguro chamar concorrentemente (operações duplicadas são
+ * deduplicadas pelo `onConflict` no servidor).
+ */
+let _draining = false;
+export async function drainOutbox(): Promise<void> {
+  if (!isSupabaseConfigured || _draining) return;
+  const ops = readOutbox();
+  if (ops.length === 0) return;
+
+  _draining = true;
+  try {
+    console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
+    for (const op of ops) {
+      if (op.attempts >= MAX_ATTEMPTS) {
+        console.warn(`[outbox:${op.label}] descartando após ${op.attempts} tentativas`);
+        removeFromOutbox(op.id);
+        continue;
+      }
+      try {
+        const result = await Promise.race([
+          executeOp(op),
+          new Promise<{ error: { message: string } }>(r =>
+            setTimeout(() => r({ error: { message: 'timeout' } }), 10000)
+          ),
+        ]);
+        if (!result.error) {
+          removeFromOutbox(op.id);
+          console.log(`[outbox:${op.label}] reenviado com sucesso`);
+        } else {
+          bumpAttempts(op.id);
+          console.warn(`[outbox:${op.label}] ainda falha:`, result.error.message);
+        }
+      } catch (e) {
+        bumpAttempts(op.id);
+        console.warn(`[outbox:${op.label}] exceção:`, e);
+      }
+    }
+  } finally {
+    _draining = false;
+  }
+}
+
+/** Retorna quantas operações ainda estão pendentes (útil para badge na UI). */
+export function getOutboxSize(): number {
+  return readOutbox().length;
 }

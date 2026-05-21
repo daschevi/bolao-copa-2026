@@ -7,9 +7,9 @@ import { Flag } from '../components/Flag';
 import { calcPoints } from '../types';
 
 export function MyBets() {
-  const { profile } = useAuthStore();
-  const { getUserBets } = useBetsStore();
-  const { matches } = useTournamentStore();
+  const profile     = useAuthStore(s => s.profile);
+  const getUserBets = useBetsStore(s => s.getUserBets);
+  const matches     = useTournamentStore(s => s.matches);
 
   const userBets = useMemo(() => profile ? getUserBets(profile.id) : [], [profile, getUserBets]);
 

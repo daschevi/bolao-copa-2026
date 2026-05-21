@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { ALL_MATCHES } from '../data/matches';
 import { getGroupTeams, GROUPS } from '../data/teams';
 import type { Match, GroupStanding } from '../types';
-import { supabase, isSupabaseConfigured, sq, bgPersist } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
 
 interface TournamentState {
   matches: Record<string, Match>;
@@ -136,17 +136,24 @@ export const useTournamentStore = create<TournamentState>()(
         get().autoPopulateKnockout();
 
         // 2. Persiste no Supabase em background (não bloqueia a UI)
+        // A op vai pra outbox em localStorage — se a aba fechar antes do retry
+        // terminar, a sincronização acontece no próximo boot.
         if (isSupabaseConfigured) {
-          const payload = {
-            match_id:       matchId,
-            home_score:     homeScore,
-            away_score:     awayScore,
-            home_penalties: homePenalties ?? null,
-            away_penalties: awayPenalties ?? null,
-          };
-          bgPersist(
-            () => supabase.from('match_results').upsert(payload, { onConflict: 'match_id' }),
-            { label: `setResult:${matchId}`, onError }
+          persistOp(
+            {
+              kind: 'upsert',
+              table: 'match_results',
+              payload: {
+                match_id:       matchId,
+                home_score:     homeScore,
+                away_score:     awayScore,
+                home_penalties: homePenalties ?? null,
+                away_penalties: awayPenalties ?? null,
+              },
+              onConflict: 'match_id',
+              label: `setResult:${matchId}`,
+            },
+            { onError }
           );
         }
 
@@ -163,13 +170,17 @@ export const useTournamentStore = create<TournamentState>()(
 
         // Persiste os times no Supabase para sincronizar entre devices
         if (isSupabaseConfigured) {
-          bgPersist(
-            () => supabase.from('match_results').upsert(
-              { match_id: matchId, home_team_id: homeTeamId ?? null, away_team_id: awayTeamId ?? null },
-              { onConflict: 'match_id' }
-            ),
-            { label: `setKnockoutTeams:${matchId}` }
-          );
+          persistOp({
+            kind: 'upsert',
+            table: 'match_results',
+            payload: {
+              match_id:     matchId,
+              home_team_id: homeTeamId ?? null,
+              away_team_id: awayTeamId ?? null,
+            },
+            onConflict: 'match_id',
+            label: `setKnockoutTeams:${matchId}`,
+          });
         }
       },
 
@@ -194,10 +205,12 @@ export const useTournamentStore = create<TournamentState>()(
 
         // Remove do Supabase em background
         if (isSupabaseConfigured) {
-          bgPersist(
-            () => supabase.from('match_results').delete().eq('match_id', matchId),
-            { label: `resetMatch:${matchId}` }
-          );
+          persistOp({
+            kind: 'delete',
+            table: 'match_results',
+            match: { column: 'match_id', value: matchId },
+            label: `resetMatch:${matchId}`,
+          });
         }
       },
 
@@ -383,19 +396,15 @@ export const useTournamentStore = create<TournamentState>()(
               updated[matchId] = { ...updated[matchId], ...patch };
             });
 
-            // 2. Zera partidas que estavam jogadas localmente mas sem score no BD
-            Object.keys(updated).forEach(matchId => {
-              const dbRow = dbMap.get(matchId);
-              const hasDbScore = dbRow && dbRow.home_score !== null && dbRow.away_score !== null;
-              if (updated[matchId].played && !hasDbScore) {
-                updated[matchId] = {
-                  ...updated[matchId],
-                  homeScore: null, awayScore: null,
-                  homePenalties: null, awayPenalties: null,
-                  played: false,
-                };
-              }
-            });
+            // NOTA: NÃO zeramos mais partidas com base em ausência no BD.
+            // "Ausente no BD" pode significar "ainda não sincronizado" — não
+            // "deletado". Zerar nesse caso causava perda de placares recém
+            // marcados pelo admin (escrita ainda em retry na outbox quando o
+            // sync rodava). Para resetar cross-device, o admin pode marcar um
+            // placar novo (que sobrescreve via realtime) ou limpar o cache
+            // manualmente em cada device. O custo: `resetMatch` no celular A
+            // não zera mais o celular B via sync — mas a UX é muito menos
+            // arriscada do que perda silenciosa de placares.
 
             return { matches: updated };
           });
@@ -410,12 +419,45 @@ export const useTournamentStore = create<TournamentState>()(
     }),
     {
       name: 'bolao-tournament-v2',
-      version: 1,
+      version: 2,
       migrate: (persisted, version) => {
-        // version < 1 = cache gerado antes do sistema de versioning;
-        // força reset para garantir que matches.ts atualizado seja usado.
+        // version < 1 = cache gerado antes do sistema de versioning.
         if (version < 1) return { matches: initialMatches };
         return persisted as TournamentState;
+      },
+      // Merge custom: a metadata estática (date, time, venue, slots, teams de
+      // grupo) vem SEMPRE de matches.ts (fonte da verdade). Apenas os campos
+      // voláteis (scores, knockout teams atribuídos) são preservados do cache.
+      // Isso garante que editar matches.ts (corrigir horário, adicionar venue)
+      // se reflete em usuários antigos sem precisar bumpar a versão e descartar
+      // os placares já marcados.
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<TournamentState> | undefined;
+        const cached = persisted?.matches ?? {};
+        const merged: Record<string, Match> = {};
+        Object.keys(initialMatches).forEach(id => {
+          const init = initialMatches[id];
+          const c = cached[id];
+          if (!c) {
+            merged[id] = init;
+            return;
+          }
+          const isGroup = init.stage === 'group';
+          merged[id] = {
+            ...init, // base estática (date, time, venue, slot labels…)
+            // Campos voláteis: cache vence
+            homeScore:     c.homeScore ?? null,
+            awayScore:     c.awayScore ?? null,
+            homePenalties: c.homePenalties ?? null,
+            awayPenalties: c.awayPenalties ?? null,
+            played:        c.played ?? false,
+            // Times: para grupos, init é fonte da verdade (são fixos no draw);
+            // para knockout, cache vence (autoPopulateKnockout / admin override)
+            homeTeamId: isGroup ? init.homeTeamId : (c.homeTeamId ?? init.homeTeamId ?? null),
+            awayTeamId: isGroup ? init.awayTeamId : (c.awayTeamId ?? init.awayTeamId ?? null),
+          };
+        });
+        return { ...currentState, matches: merged };
       },
       partialize: (s) => ({ matches: s.matches }),
     }

@@ -17,10 +17,14 @@ const ALL_STAGES: { id: KnockoutStage; label: string }[] = [
 ];
 
 export function Knockout() {
-  const { matches, setKnockoutTeams } = useTournamentStore();
-  const { profile } = useAuthStore();
+  // Seletores granulares: este componente só re-renderiza quando matches,
+  // setKnockoutTeams, profile ou phases efetivamente mudam — não a cada `set`
+  // arbitrário em qualquer um dos stores.
+  const matches          = useTournamentStore(s => s.matches);
+  const setKnockoutTeams = useTournamentStore(s => s.setKnockoutTeams);
+  const profile          = useAuthStore(s => s.profile);
   const isAdmin = profile?.isAdmin ?? false;
-  const { phases } = usePhaseSettingsStore();
+  const phases  = usePhaseSettingsStore(s => s.phases);
 
   // Admin vê todas as abas; usuário comum só vê as fases visíveis
   const STAGES = useMemo(

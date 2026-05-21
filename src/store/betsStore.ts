@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase, isSupabaseConfigured, sq, bgPersist } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
 import type { Bet, LeaderboardEntry, Profile } from '../types';
 import { calcPoints } from '../types';
 import { useTournamentStore } from './tournamentStore';
@@ -24,22 +24,44 @@ export const useBetsStore = create<BetsState>()(
         const key = `${userId}-${matchId}`;
         const match = useTournamentStore.getState().matches[matchId];
         const points = match?.played ? calcPoints({ homeScore, awayScore }, match) : null;
-        const bet: Bet = { userId, matchId, homeScore, awayScore, points };
+        // Marca pendingPersist=true até o BD confirmar — o merge do
+        // fetchAllBets preserva esta entrada em vez de sobrescrever com a
+        // versão antiga do BD (que ainda não a tem).
+        const bet: Bet = { userId, matchId, homeScore, awayScore, points, pendingPersist: true };
 
         // 1. Salva localmente (imediato — UI não trava)
         set(state => ({ bets: { ...state.bets, [key]: bet } }));
 
-        // 2. Persiste no Supabase em background com retry automático
+        // 2. Persiste no Supabase via outbox (durável a fechamento de aba)
         // Não enviamos 'points' — é sempre recalculado ao vivo via calcPoints()
         // para evitar inconsistências quando o admin reseta/corrige resultados.
         if (isSupabaseConfigured) {
-          bgPersist(
-            () => supabase.from('bets').upsert(
-              { user_id: userId, match_id: matchId, home_score: homeScore, away_score: awayScore },
-              { onConflict: 'user_id,match_id' }
-            ),
-            { label: `saveBet:${matchId}` }
+          persistOp(
+            {
+              kind: 'upsert',
+              table: 'bets',
+              payload: { user_id: userId, match_id: matchId, home_score: homeScore, away_score: awayScore },
+              onConflict: 'user_id,match_id',
+              label: `saveBet:${matchId}`,
+            },
+            {
+              onSuccess: () => {
+                set(state => {
+                  const existing = state.bets[key];
+                  // Só limpa o flag se a entrada ainda corresponde ao que
+                  // salvamos (usuário pode ter editado o palpite enquanto a
+                  // primeira escrita estava em voo).
+                  if (!existing || existing.homeScore !== homeScore || existing.awayScore !== awayScore) {
+                    return state;
+                  }
+                  return { bets: { ...state.bets, [key]: { ...existing, pendingPersist: false } } };
+                });
+              },
+            }
           );
+        } else {
+          // Sem Supabase: marca como persistido localmente (não há servidor para confirmar)
+          set(state => ({ bets: { ...state.bets, [key]: { ...bet, pendingPersist: false } } }));
         }
 
         return { error: null };
@@ -100,26 +122,37 @@ export const useBetsStore = create<BetsState>()(
           // Captura bets locais antes do merge (para reconciliação)
           const localBets = get().bets;
 
-          // Merge: banco sobrescreve chaves conhecidas; bets locais ausentes no banco
-          // são preservadas (podem ser saves pendentes que ainda não chegaram ao servidor)
+          // Merge: banco sobrescreve chaves conhecidas EXCETO quando há uma
+          // escrita local ainda pendente (pendingPersist=true). Bets locais
+          // ausentes no banco também são preservadas — podem ser saves cuja
+          // persistência ainda não confirmou.
           set(state => {
-            const merged = { ...state.bets }; // começa com estado local
-            Object.assign(merged, dbBets);    // banco tem prioridade para chaves que conhece
+            const merged: Record<string, Bet> = { ...state.bets };
+            Object.entries(dbBets).forEach(([key, dbBet]) => {
+              const localBet = merged[key];
+              if (localBet?.pendingPersist) {
+                // Preserva a escrita local; ela será re-enviada via persistOp
+                return;
+              }
+              merged[key] = dbBet;
+            });
             return { bets: merged };
           });
 
-          // Reconciliação: re-envia ao banco qualquer bet local que não está no BD
-          // (recupera palpites cujo bgPersist falhou silenciosamente)
+          // Reconciliação: re-envia ao banco qualquer bet local que não está no
+          // BD (cobre o caso raro onde a outbox foi corrompida ou o cache veio
+          // de outro dispositivo via export). `persistOp` agora enfileira na
+          // outbox, então mesmo que o app feche em seguida, fica persistido.
           Object.entries(localBets).forEach(([key, bet]) => {
             if (!dbBets[key] && bet.userId && bet.matchId) {
               console.log(`[betsStore] reconciliando bet pendente: ${key}`);
-              bgPersist(
-                () => supabase.from('bets').upsert(
-                  { user_id: bet.userId, match_id: bet.matchId, home_score: bet.homeScore, away_score: bet.awayScore },
-                  { onConflict: 'user_id,match_id' }
-                ),
-                { label: `reconcile:${key}` }
-              );
+              persistOp({
+                kind: 'upsert',
+                table: 'bets',
+                payload: { user_id: bet.userId, match_id: bet.matchId, home_score: bet.homeScore, away_score: bet.awayScore },
+                onConflict: 'user_id,match_id',
+                label: `reconcile:${key}`,
+              });
             }
           });
 

@@ -11,49 +11,67 @@ import { useAuthStore } from './store/authStore';
 import { useTournamentStore } from './store/tournamentStore';
 import { useBetsStore } from './store/betsStore';
 import { usePhaseSettingsStore } from './store/phaseSettingsStore';
-import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { supabase, isSupabaseConfigured, drainOutbox } from './lib/supabase';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { profile } = useAuthStore();
+  const profile = useAuthStore(s => s.profile);
   if (!profile) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 export default function App() {
-  const { profile, initAuth, sessionChecked } = useAuthStore();
-  const { syncFromSupabase } = useTournamentStore();
-  const { fetchAllBets } = useBetsStore();
-  const { syncPhaseSettings } = usePhaseSettingsStore();
+  // Seletores granulares: assinar só o que cada effect/render usa.
+  // Antes (destructuring) o componente re-renderizava a cada `set` em qualquer
+  // store, disparando re-runs desnecessários dos useEffects de deps mutáveis.
+  const profile          = useAuthStore(s => s.profile);
+  const sessionChecked   = useAuthStore(s => s.sessionChecked);
+  const initAuth         = useAuthStore(s => s.initAuth);
+  const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
+  const fetchAllBets     = useBetsStore(s => s.fetchAllBets);
+  const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
-  // Inicializa auth. Mostra splash até a verificação de sessão terminar.
+  // Inicialização: dispara o initAuth e drena qualquer op pendente da outbox
+  // (escritas que ficaram presas da sessão anterior). NÃO sincroniza matches
+  // aqui — isso espera o auth resolver (próximo effect) para evitar correr o
+  // sync antes da sessão estar pronta.
   useEffect(() => {
-    syncFromSupabase();
+    drainOutbox();
     const cleanup = initAuth();
     return cleanup;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Após login: re-sincroniza tudo com auth ativo
-  // (cobre browsers novos, localStorage vazio, falha silenciosa de RLS)
-  // O sync já tem retry interno (3×), mas disparamos um segundo sync após 15s
-  // para garantir que o Supabase acordou do sleep (free tier pode demorar >10s)
+  // Após sessão verificada: sincroniza tudo.
+  // Roda mesmo sem profile (matches são dados públicos), mas só depois do
+  // sessionChecked para garantir que initAuth já terminou — evita correr a
+  // sync em paralelo com a verificação de sessão, o que misturava ordem de
+  // chamadas e dificultava debug.
   useEffect(() => {
-    if (!profile) return;
+    if (!sessionChecked) return;
     syncFromSupabase();
-    fetchAllBets();
-    syncPhaseSettings();
-    const retryTimer = setTimeout(() => {
-      syncFromSupabase();
+    if (profile) {
       fetchAllBets();
       syncPhaseSettings();
+    }
+    // Segundo sync após 15s — cobre cold start do Supabase free tier
+    const retryTimer = setTimeout(() => {
+      syncFromSupabase();
+      if (profile) {
+        fetchAllBets();
+        syncPhaseSettings();
+      }
     }, 15000);
     return () => clearTimeout(retryTimer);
-  }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionChecked, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-sync quando o usuário volta ao app (minimizou, trocou de aba, desbloqueou o celular)
+  // Re-sync quando o usuário volta ao app (minimizou, trocou de aba, desbloqueou).
+  // Drena outbox primeiro — se a aba estava em background com palpites pendentes,
+  // ela acorda e re-tenta antes de qualquer leitura, garantindo que o fetch
+  // seguinte já enxergue os dados que acabaram de subir.
   useEffect(() => {
     if (!profile) return;
-    const onVisible = () => {
+    const onVisible = async () => {
       if (document.visibilityState === 'visible') {
+        await drainOutbox();
         syncFromSupabase();
         fetchAllBets();
         syncPhaseSettings();
@@ -62,6 +80,14 @@ export default function App() {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-drena outbox quando rede volta — cobre o caso de o usuário ficar
+  // offline com palpites na fila e voltar online sem trocar de aba.
+  useEffect(() => {
+    const onOnline = () => { drainOutbox(); };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
 
   // Supabase Realtime: propaga mudanças em tempo real para todos os browsers
   // Requer: no painel Supabase → Database → Replication → adicionar match_results e bets
