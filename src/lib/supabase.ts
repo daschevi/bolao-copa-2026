@@ -176,6 +176,8 @@ export async function persistOp(
     onSuccess?: () => void;
   } = {}
 ): Promise<void> {
+  // Dev/CI sem .env — no-op silencioso; não entope a outbox com ops que nunca executarão
+  if (!isSupabaseConfigured) return;
   const id = enqueueOutbox(input);
   const label = input.label;
 

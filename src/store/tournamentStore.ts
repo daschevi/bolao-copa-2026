@@ -420,10 +420,10 @@ export const useTournamentStore = create<TournamentState>()(
     {
       name: 'bolao-tournament-v2',
       version: 2,
-      migrate: (persisted, version) => {
+      migrate: (persisted, version): TournamentState => {
         // version < 1 = cache gerado antes do sistema de versioning.
-        if (version < 1) return { matches: initialMatches };
-        return persisted as TournamentState;
+        if (version < 1) return { matches: initialMatches } as unknown as TournamentState;
+        return persisted as unknown as TournamentState;
       },
       // Merge custom: a metadata estática (date, time, venue, slots, teams de
       // grupo) vem SEMPRE de matches.ts (fonte da verdade). Apenas os campos
@@ -459,7 +459,26 @@ export const useTournamentStore = create<TournamentState>()(
         });
         return { ...currentState, matches: merged };
       },
-      partialize: (s) => ({ matches: s.matches }),
+      // Persiste apenas campos voláteis (~70% menos dados no localStorage).
+      // A metadata estática (date, time, venue, slot labels) é sempre
+      // reconstituída do initialMatches pela função `merge` acima.
+      // `as unknown as TournamentState`: Zustand espera que partialize retorne
+      // o estado completo; usamos cast porque o `merge` custom reconstrói os
+      // campos estáticos a partir de initialMatches no momento da reidratação.
+      partialize: (s) => ({
+        matches: Object.fromEntries(
+          Object.entries(s.matches).map(([id, m]) => [id, {
+            homeScore:     m.homeScore,
+            awayScore:     m.awayScore,
+            homePenalties: m.homePenalties,
+            awayPenalties: m.awayPenalties,
+            played:        m.played,
+            // Times de grupo são fixos no draw — não precisam persistir
+            homeTeamId: m.stage === 'group' ? undefined : m.homeTeamId,
+            awayTeamId: m.stage === 'group' ? undefined : m.awayTeamId,
+          }])
+        ),
+      }) as unknown as TournamentState,
     }
   )
 );

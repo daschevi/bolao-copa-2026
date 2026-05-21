@@ -30,23 +30,20 @@ export default function App() {
   const fetchAllBets     = useBetsStore(s => s.fetchAllBets);
   const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
-  // Inicialização: dispara o initAuth e drena qualquer op pendente da outbox
-  // (escritas que ficaram presas da sessão anterior). NÃO sincroniza matches
-  // aqui — isso espera o auth resolver (próximo effect) para evitar correr o
-  // sync antes da sessão estar pronta.
+  // Inicialização: apenas dispara initAuth.
+  // drainOutbox é proposital mente adiado para o effect de sessionChecked —
+  // se o JWT expirou, drainOutbox rodaria com auth.uid()=null e levaria
+  // RLS-block em todas as ops da outbox antes de a sessão ser restaurada.
   useEffect(() => {
-    drainOutbox();
     const cleanup = initAuth();
     return cleanup;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Após sessão verificada: sincroniza tudo.
-  // Roda mesmo sem profile (matches são dados públicos), mas só depois do
-  // sessionChecked para garantir que initAuth já terminou — evita correr a
-  // sync em paralelo com a verificação de sessão, o que misturava ordem de
-  // chamadas e dificultava debug.
+  // Após sessão verificada: drena outbox (agora com auth.uid() disponível)
+  // e sincroniza tudo.
   useEffect(() => {
     if (!sessionChecked) return;
+    drainOutbox();          // sessão já foi restaurada — RLS vai funcionar
     syncFromSupabase();
     if (profile) {
       fetchAllBets();

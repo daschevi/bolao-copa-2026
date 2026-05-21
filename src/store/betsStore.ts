@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
 import type { Bet, LeaderboardEntry, Profile } from '../types';
 import { calcPoints } from '../types';
 import { useTournamentStore } from './tournamentStore';
+import { useAuthStore } from './authStore';
 
 interface BetsState {
   bets: Record<string, Bet>; // key: `${userId}-${matchId}`
@@ -131,7 +132,13 @@ export const useBetsStore = create<BetsState>()(
             Object.entries(dbBets).forEach(([key, dbBet]) => {
               const localBet = merged[key];
               if (localBet?.pendingPersist) {
-                // Preserva a escrita local; ela será re-enviada via persistOp
+                // BD já chegou ao mesmo estado → não há mais pendência, libera o flag
+                if (localBet.homeScore === dbBet.homeScore &&
+                    localBet.awayScore === dbBet.awayScore) {
+                  merged[key] = { ...localBet, pendingPersist: false };
+                }
+                // scores diferentes = usuário editou enquanto o save estava em voo,
+                // preserva versão local (será re-enviada pelo persistOp original)
                 return;
               }
               merged[key] = dbBet;
@@ -140,10 +147,11 @@ export const useBetsStore = create<BetsState>()(
           });
 
           // Reconciliação: re-envia ao banco qualquer bet local que não está no
-          // BD (cobre o caso raro onde a outbox foi corrompida ou o cache veio
-          // de outro dispositivo via export). `persistOp` agora enfileira na
-          // outbox, então mesmo que o app feche em seguida, fica persistido.
+          // BD. Filtra pelo usuário atual para não tentar salvar bets de outro
+          // usuário (que levaria RLS-block em PCs compartilhados sem logout).
+          const currentUserId = useAuthStore.getState().profile?.id;
           Object.entries(localBets).forEach(([key, bet]) => {
+            if (bet.userId !== currentUserId) return; // ignora bets de outro usuário
             if (!dbBets[key] && bet.userId && bet.matchId) {
               console.log(`[betsStore] reconciliando bet pendente: ${key}`);
               persistOp({

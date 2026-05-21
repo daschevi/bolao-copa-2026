@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, drainOutbox } from '../lib/supabase';
 import type { Profile } from '../types';
 
 const ALLOWED_DOMAIN = 'golfleet.com.br';
@@ -172,6 +172,13 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
+        // Tenta drenar ops pendentes antes de limpar — palpite feito há pouco
+        // não será perdido se o usuário clicar logout em seguida.
+        // Timeout de 3s: se a rede estiver ruim, não trava o logout.
+        try {
+          await Promise.race([drainOutbox(), new Promise(r => setTimeout(r, 3000))]);
+        } catch { /* ignora */ }
+
         set({ profile: null, loading: false, error: null });
         if (isSupabaseConfigured) {
           try { await supabase.auth.signOut(); } catch { /* ignora */ }
