@@ -4,24 +4,75 @@
 
 @layer base {
   body {
-    @apply bg-copa-dark text-gray-100 min-h-screen;
+    background: #070707;
+    color: #f3f4f6;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
   }
 }
 
 @layer components {
+  /* Botão primário — verde esportivo */
   .btn-primary {
-    @apply bg-copa-green hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors;
+    @apply font-bold py-2 px-4 rounded-lg transition-all text-black tracking-wide;
+    background: #22C55E;
   }
+  .btn-primary:hover:not(:disabled) {
+    background: #16A34A;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px #22C55E44;
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Botão secundário */
   .btn-secondary {
-    @apply bg-copa-navy hover:bg-slate-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors border border-slate-600;
+    @apply bg-transparent border text-white font-semibold py-2 px-4 rounded-lg transition-colors hover:bg-white/5;
+    border-color: #2A2A2A;
   }
+
+  /* Card — preto com borda sutil */
   .card {
-    @apply bg-copa-navy rounded-xl border border-slate-700 p-4;
+    @apply rounded-xl p-4;
+    background: #111111;
+    border: 1px solid #1F1F1F;
+    box-shadow: 0 2px 12px #00000060;
   }
+
+  /* Card com acento verde no topo */
+  .card-accent {
+    @apply rounded-xl p-4;
+    background: #111111;
+    border: 1px solid #1F1F1F;
+    border-top: 2px solid #22C55E;
+    box-shadow: 0 2px 12px #00000060;
+  }
+
+  /* Inputs */
   .input {
-    @apply bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-copa-green w-full;
+    @apply border rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none w-full transition-all;
+    background: #1A1A1A;
+    border-color: #2A2A2A;
   }
+  .input:focus {
+    border-color: #22C55E;
+    box-shadow: 0 0 0 2px #22C55E22;
+  }
+
   .score-input {
-    @apply w-12 text-center bg-slate-800 border border-slate-600 rounded-lg py-1 text-white font-bold text-lg focus:outline-none focus:border-copa-gold;
+    @apply w-12 text-center rounded-lg py-1 text-white font-bold text-lg focus:outline-none transition-all;
+    background: #1A1A1A;
+    border: 1px solid #2A2A2A;
+  }
+  .score-input:focus {
+    border-color: #22C55E;
+    box-shadow: 0 0 0 2px #22C55E22;
+  }
+
+  /* Texto com glow verde */
+  .green-glow {
+    text-shadow: 0 0 20px #22C55E88;
   }
 }

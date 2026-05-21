@@ -7,6 +7,7 @@ export interface Team {
   name: string;
   shortName: string;
   flag: string;
+  code: string; // ISO 3166-1 alpha-2 for flagcdn.com
   group: string;
   continent: Continent;
 }
@@ -23,6 +24,9 @@ export interface Match {
   homePenalties?: number | null;
   awayPenalties?: number | null;
   played: boolean;
+  date?: string;   // 'YYYY-MM-DD'
+  time?: string;   // 'HH:MM' horário de Brasília
+  venue?: string;
   homeFromSlot?: string;
   awayFromSlot?: string;
 }

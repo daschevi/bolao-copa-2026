@@ -1,6 +1,7 @@
 import { useTournamentStore } from '../store/tournamentStore';
 import { TEAMS_BY_ID } from '../data/teams';
 import { MatchCard } from './MatchCard';
+import { Flag } from './Flag';
 import type { Match } from '../types';
 
 interface Props {
@@ -38,11 +39,11 @@ export function GroupCard({ group, matches }: Props) {
               return (
                 <tr key={s.teamId} className={`border-b border-slate-800 ${qualified ? '' : 'opacity-70'}`}>
                   <td className="py-1 pr-2 text-gray-500">{i + 1}</td>
-                  <td className="py-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${i < 2 ? 'bg-copa-green' : i < 3 ? 'bg-copa-gold' : 'bg-transparent'}`} />
-                      <span>{team?.flag}</span>
-                      <span className="text-white">{team?.shortName}</span>
+                  <td className="py-1 w-full max-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${i < 2 ? 'bg-copa-green' : i < 3 ? 'bg-copa-gold' : 'bg-transparent'}`} />
+                      {team && <Flag code={team.code} name={team.name} size="sm" />}
+                      <span className="text-white text-xs truncate min-w-0" title={team?.name}>{team?.name}</span>
                     </div>
                   </td>
                   <td className="text-center py-1 px-1 text-gray-300">{s.played}</td>

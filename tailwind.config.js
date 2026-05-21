@@ -5,15 +5,17 @@ export default {
     extend: {
       colors: {
         copa: {
-          green: '#006847',
-          gold: '#C9A84C',
-          red: '#C8102E',
-          dark: '#0a1628',
-          navy: '#1a2744',
+          green: '#22C55E',   // verde esportivo principal
+          gold:  '#4ADE80',   // verde claro — pontos / destaques
+          red:   '#EF4444',   // vermelho admin
+          dark:  '#070707',   // fundo preto
+          navy:  '#111111',   // cards
         },
+      },
+      fontFamily: {
+        display: ['system-ui', 'sans-serif'],
       },
     },
   },
   plugins: [],
 }
-

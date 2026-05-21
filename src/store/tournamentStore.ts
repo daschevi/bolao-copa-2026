@@ -3,16 +3,17 @@ import { persist } from 'zustand/middleware';
 import { ALL_MATCHES } from '../data/matches';
 import { getGroupTeams, GROUPS } from '../data/teams';
 import type { Match, GroupStanding } from '../types';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, sq, bgPersist } from '../lib/supabase';
 
 interface TournamentState {
   matches: Record<string, Match>;
-  setResult: (matchId: string, homeScore: number, awayScore: number, homePenalties?: number | null, awayPenalties?: number | null) => Promise<void>;
+  setResult: (matchId: string, homeScore: number, awayScore: number, homePenalties?: number | null, awayPenalties?: number | null, onError?: (msg: string) => void) => { error: string | null };
   setKnockoutTeams: (matchId: string, homeTeamId: string | null, awayTeamId: string | null) => void;
   getGroupStandings: (group: string) => GroupStanding[];
   getAllThirdPlace: () => (GroupStanding & { group: string })[];
   resetMatch: (matchId: string) => void;
   syncFromSupabase: () => Promise<void>;
+  autoPopulateKnockout: () => void;
 }
 
 function computeStandings(group: string, matches: Record<string, Match>): GroupStanding[] {
@@ -31,9 +32,9 @@ function computeStandings(group: string, matches: Record<string, Match>): GroupS
       h.played++; a.played++;
       h.goalsFor += m.homeScore!; h.goalsAgainst += m.awayScore!;
       a.goalsFor += m.awayScore!; a.goalsAgainst += m.homeScore!;
-      if (m.homeScore! > m.awayScore!) { h.won++; h.points += 3; a.lost++; }
-      else if (m.homeScore! === m.awayScore!) { h.drawn++; h.points++; a.drawn++; a.points++; }
-      else { a.won++; a.points += 3; h.lost++; }
+      if (m.homeScore! > m.awayScore!)       { h.won++;   h.points += 3; a.lost++; }
+      else if (m.homeScore! === m.awayScore!) { h.drawn++; h.points++;   a.drawn++; a.points++; }
+      else                                    { a.won++;   a.points += 3; h.lost++; }
       h.goalDifference = h.goalsFor - h.goalsAgainst;
       a.goalDifference = a.goalsFor - a.goalsAgainst;
     });
@@ -43,6 +44,71 @@ function computeStandings(group: string, matches: Record<string, Match>): GroupS
   );
 }
 
+/** Retorna o time vencedor de uma partida eliminatória (ou null se ainda não decidido). */
+function getMatchWinner(m: Match): string | null {
+  if (!m.played || m.homeScore === null || m.awayScore === null) return null;
+  if (m.homeScore > m.awayScore) return m.homeTeamId;
+  if (m.awayScore > m.homeScore) return m.awayTeamId;
+  if (m.homePenalties != null && m.awayPenalties != null) {
+    return m.homePenalties > m.awayPenalties ? m.homeTeamId : m.awayTeamId;
+  }
+  return null;
+}
+
+/** Retorna o time perdedor de uma partida eliminatória (para o 3º lugar). */
+function getMatchLoser(m: Match): string | null {
+  if (!m.played || m.homeScore === null || m.awayScore === null) return null;
+  if (m.homeScore > m.awayScore) return m.awayTeamId;
+  if (m.awayScore > m.homeScore) return m.homeTeamId;
+  if (m.homePenalties != null && m.awayPenalties != null) {
+    return m.homePenalties > m.awayPenalties ? m.awayTeamId : m.homeTeamId;
+  }
+  return null;
+}
+
+/** Mapa de propagação: quem vence/perde cada partida vai para qual slot da próxima fase. */
+const KNOCKOUT_PROPAGATION: Array<{
+  src: string; outcome: 'winner' | 'loser';
+  dst: string; side: 'homeTeamId' | 'awayTeamId';
+}> = [
+  // R32 → Oitavas (R16)
+  { src: 'R32-2',  outcome: 'winner', dst: 'R16-1', side: 'homeTeamId' },
+  { src: 'R32-5',  outcome: 'winner', dst: 'R16-1', side: 'awayTeamId' },
+  { src: 'R32-1',  outcome: 'winner', dst: 'R16-2', side: 'homeTeamId' },
+  { src: 'R32-3',  outcome: 'winner', dst: 'R16-2', side: 'awayTeamId' },
+  { src: 'R32-4',  outcome: 'winner', dst: 'R16-3', side: 'homeTeamId' },
+  { src: 'R32-6',  outcome: 'winner', dst: 'R16-3', side: 'awayTeamId' },
+  { src: 'R32-7',  outcome: 'winner', dst: 'R16-4', side: 'homeTeamId' },
+  { src: 'R32-8',  outcome: 'winner', dst: 'R16-4', side: 'awayTeamId' },
+  { src: 'R32-11', outcome: 'winner', dst: 'R16-5', side: 'homeTeamId' },
+  { src: 'R32-12', outcome: 'winner', dst: 'R16-5', side: 'awayTeamId' },
+  { src: 'R32-9',  outcome: 'winner', dst: 'R16-6', side: 'homeTeamId' },
+  { src: 'R32-10', outcome: 'winner', dst: 'R16-6', side: 'awayTeamId' },
+  { src: 'R32-14', outcome: 'winner', dst: 'R16-7', side: 'homeTeamId' },
+  { src: 'R32-16', outcome: 'winner', dst: 'R16-7', side: 'awayTeamId' },
+  { src: 'R32-13', outcome: 'winner', dst: 'R16-8', side: 'homeTeamId' },
+  { src: 'R32-15', outcome: 'winner', dst: 'R16-8', side: 'awayTeamId' },
+  // Oitavas (R16) → Quartas (QF)
+  { src: 'R16-1',  outcome: 'winner', dst: 'QF-1', side: 'homeTeamId' },
+  { src: 'R16-2',  outcome: 'winner', dst: 'QF-1', side: 'awayTeamId' },
+  { src: 'R16-5',  outcome: 'winner', dst: 'QF-2', side: 'homeTeamId' },
+  { src: 'R16-6',  outcome: 'winner', dst: 'QF-2', side: 'awayTeamId' },
+  { src: 'R16-3',  outcome: 'winner', dst: 'QF-3', side: 'homeTeamId' },
+  { src: 'R16-4',  outcome: 'winner', dst: 'QF-3', side: 'awayTeamId' },
+  { src: 'R16-7',  outcome: 'winner', dst: 'QF-4', side: 'homeTeamId' },
+  { src: 'R16-8',  outcome: 'winner', dst: 'QF-4', side: 'awayTeamId' },
+  // Quartas (QF) → Semifinais (SF)
+  { src: 'QF-1',   outcome: 'winner', dst: 'SF-1',  side: 'homeTeamId' },
+  { src: 'QF-2',   outcome: 'winner', dst: 'SF-1',  side: 'awayTeamId' },
+  { src: 'QF-3',   outcome: 'winner', dst: 'SF-2',  side: 'homeTeamId' },
+  { src: 'QF-4',   outcome: 'winner', dst: 'SF-2',  side: 'awayTeamId' },
+  // Semifinais → Final + 3º Lugar
+  { src: 'SF-1',   outcome: 'winner', dst: 'FINAL', side: 'homeTeamId' },
+  { src: 'SF-2',   outcome: 'winner', dst: 'FINAL', side: 'awayTeamId' },
+  { src: 'SF-1',   outcome: 'loser',  dst: 'THIRD', side: 'homeTeamId' },
+  { src: 'SF-2',   outcome: 'loser',  dst: 'THIRD', side: 'awayTeamId' },
+];
+
 const initialMatches = Object.fromEntries(ALL_MATCHES.map(m => [m.id, { ...m }]));
 
 export const useTournamentStore = create<TournamentState>()(
@@ -50,31 +116,210 @@ export const useTournamentStore = create<TournamentState>()(
     (set, get) => ({
       matches: initialMatches,
 
-      setResult: async (matchId, homeScore, awayScore, homePenalties, awayPenalties) => {
+      setResult: (matchId, homeScore, awayScore, homePenalties, awayPenalties, onError) => {
+        // 1. Atualiza estado local imediatamente (síncrono — UI responde na hora)
         set(state => ({
           matches: {
             ...state.matches,
-            [matchId]: { ...state.matches[matchId], homeScore, awayScore, homePenalties, awayPenalties, played: true },
+            [matchId]: {
+              ...state.matches[matchId],
+              homeScore,
+              awayScore,
+              homePenalties: homePenalties ?? null,
+              awayPenalties: awayPenalties ?? null,
+              played: true,
+            },
           },
         }));
+
+        // 1b. Auto-popula chaveamento (qualquer fase)
+        get().autoPopulateKnockout();
+
+        // 2. Persiste no Supabase em background (não bloqueia a UI)
         if (isSupabaseConfigured) {
-          await supabase.from('match_results').upsert({ match_id: matchId, home_score: homeScore, away_score: awayScore, home_penalties: homePenalties, away_penalties: awayPenalties });
+          const payload = {
+            match_id:       matchId,
+            home_score:     homeScore,
+            away_score:     awayScore,
+            home_penalties: homePenalties ?? null,
+            away_penalties: awayPenalties ?? null,
+          };
+          bgPersist(
+            () => supabase.from('match_results').upsert(payload, { onConflict: 'match_id' }),
+            { label: `setResult:${matchId}`, onError }
+          );
         }
+
+        return { error: null };
       },
 
       setKnockoutTeams: (matchId, homeTeamId, awayTeamId) => {
         set(state => ({
-          matches: { ...state.matches, [matchId]: { ...state.matches[matchId], homeTeamId, awayTeamId } },
+          matches: {
+            ...state.matches,
+            [matchId]: { ...state.matches[matchId], homeTeamId, awayTeamId },
+          },
         }));
+
+        // Persiste os times no Supabase para sincronizar entre devices
+        if (isSupabaseConfigured) {
+          bgPersist(
+            () => supabase.from('match_results').upsert(
+              { match_id: matchId, home_team_id: homeTeamId ?? null, away_team_id: awayTeamId ?? null },
+              { onConflict: 'match_id' }
+            ),
+            { label: `setKnockoutTeams:${matchId}` }
+          );
+        }
       },
 
       resetMatch: (matchId) => {
+        // Reseta localmente (síncrono — UI responde na hora)
         set(state => ({
-          matches: { ...state.matches, [matchId]: { ...state.matches[matchId], homeScore: null, awayScore: null, homePenalties: null, awayPenalties: null, played: false } },
+          matches: {
+            ...state.matches,
+            [matchId]: {
+              ...state.matches[matchId],
+              homeScore: null,
+              awayScore: null,
+              homePenalties: null,
+              awayPenalties: null,
+              played: false,
+            },
+          },
         }));
+
+        // Recalcula chaveamento após reset
+        get().autoPopulateKnockout();
+
+        // Remove do Supabase em background
+        if (isSupabaseConfigured) {
+          bgPersist(
+            () => supabase.from('match_results').delete().eq('match_id', matchId),
+            { label: `resetMatch:${matchId}` }
+          );
+        }
       },
 
       getGroupStandings: (group) => computeStandings(group, get().matches),
+
+      // ── Auto-popula R32 com os classificados dos grupos ──────────────────
+      autoPopulateKnockout: () => {
+        const { matches, getGroupStandings } = get();
+
+        // Descobre quais grupos estão com todos os 6 jogos encerrados
+        const groupComplete: Record<string, boolean> = {};
+        GROUPS.forEach(g => {
+          const gm = Object.values(matches).filter(m => m.stage === 'group' && m.group === g);
+          groupComplete[g] = gm.length === 6 && gm.every(m => m.played);
+        });
+
+        // Classificação de cada grupo completo
+        const standings: Record<string, GroupStanding[]> = {};
+        GROUPS.filter(g => groupComplete[g]).forEach(g => {
+          standings[g] = getGroupStandings(g);
+        });
+
+        const updatedMatches = { ...matches };
+        let changed = false;
+
+        const assign = (matchId: string, side: 'homeTeamId' | 'awayTeamId', teamId: string | null) => {
+          if (teamId && updatedMatches[matchId] && updatedMatches[matchId][side] !== teamId) {
+            updatedMatches[matchId] = { ...updatedMatches[matchId], [side]: teamId };
+            changed = true;
+          }
+        };
+
+        // Mapeamento 1º/2º lugar → partida R32 (rank 0 = 1º, rank 1 = 2º)
+        const direct: Array<{ matchId: string; side: 'homeTeamId' | 'awayTeamId'; rank: 0 | 1; group: string }> = [
+          { matchId: 'R32-1',  side: 'homeTeamId', rank: 1, group: 'A' },
+          { matchId: 'R32-1',  side: 'awayTeamId', rank: 1, group: 'B' },
+          { matchId: 'R32-2',  side: 'homeTeamId', rank: 0, group: 'E' },
+          { matchId: 'R32-3',  side: 'homeTeamId', rank: 0, group: 'F' },
+          { matchId: 'R32-3',  side: 'awayTeamId', rank: 1, group: 'C' },
+          { matchId: 'R32-4',  side: 'homeTeamId', rank: 0, group: 'C' },
+          { matchId: 'R32-4',  side: 'awayTeamId', rank: 1, group: 'F' },
+          { matchId: 'R32-5',  side: 'homeTeamId', rank: 0, group: 'I' },
+          { matchId: 'R32-6',  side: 'homeTeamId', rank: 1, group: 'E' },
+          { matchId: 'R32-6',  side: 'awayTeamId', rank: 1, group: 'I' },
+          { matchId: 'R32-7',  side: 'homeTeamId', rank: 0, group: 'A' },
+          { matchId: 'R32-8',  side: 'homeTeamId', rank: 0, group: 'L' },
+          { matchId: 'R32-9',  side: 'homeTeamId', rank: 0, group: 'D' },
+          { matchId: 'R32-10', side: 'homeTeamId', rank: 0, group: 'G' },
+          { matchId: 'R32-11', side: 'homeTeamId', rank: 1, group: 'K' },
+          { matchId: 'R32-11', side: 'awayTeamId', rank: 1, group: 'L' },
+          { matchId: 'R32-12', side: 'homeTeamId', rank: 0, group: 'H' },
+          { matchId: 'R32-12', side: 'awayTeamId', rank: 1, group: 'J' },
+          { matchId: 'R32-13', side: 'homeTeamId', rank: 0, group: 'B' },
+          { matchId: 'R32-14', side: 'homeTeamId', rank: 0, group: 'J' },
+          { matchId: 'R32-14', side: 'awayTeamId', rank: 1, group: 'H' },
+          { matchId: 'R32-15', side: 'homeTeamId', rank: 0, group: 'K' },
+          { matchId: 'R32-16', side: 'homeTeamId', rank: 1, group: 'D' },
+          { matchId: 'R32-16', side: 'awayTeamId', rank: 1, group: 'G' },
+        ];
+
+        direct.forEach(({ matchId, side, rank, group }) => {
+          if (!groupComplete[group]) return;
+          assign(matchId, side, standings[group]?.[rank]?.teamId ?? null);
+        });
+
+        // 3ºs lugares — só quando todos os 12 grupos estiverem concluídos
+        if (GROUPS.every(g => groupComplete[g])) {
+          const allThird = GROUPS.map(g => ({
+            group: g,
+            teamId:  standings[g]?.[2]?.teamId  ?? null,
+            points:  standings[g]?.[2]?.points   ?? 0,
+            gd:      standings[g]?.[2]?.goalDifference ?? 0,
+            gf:      standings[g]?.[2]?.goalsFor ?? 0,
+          })).filter(t => t.teamId !== null);
+
+          const ranked = [...allThird].sort((a, b) =>
+            b.points - a.points || b.gd - a.gd || b.gf - a.gf
+          );
+          const qualified = ranked.slice(0, 8);
+
+          // Cada slot '3ª XYZ' tem grupos elegíveis (conforme tabela FIFA)
+          const thirdSlots: Array<{ matchId: string; eligible: string[] }> = [
+            { matchId: 'R32-2',  eligible: ['A','B','C','D','F'] },
+            { matchId: 'R32-5',  eligible: ['C','D','F','G','H'] },
+            { matchId: 'R32-7',  eligible: ['C','E','F','H','I'] },
+            { matchId: 'R32-8',  eligible: ['E','H','I','J','K'] },
+            { matchId: 'R32-9',  eligible: ['B','E','F','I','J'] },
+            { matchId: 'R32-10', eligible: ['A','E','H','I','J'] },
+            { matchId: 'R32-13', eligible: ['E','F','G','I','J'] },
+            { matchId: 'R32-15', eligible: ['D','E','I','J','L'] },
+          ];
+
+          // Backtracking para garantir que todos os 8 slots sejam preenchidos.
+          // O greedy falha quando escolhas iniciais bloqueiam slots posteriores.
+          const thirdMatching = new Map<string, string>();
+          function findThirdMatching(idx: number, used: Set<string>): boolean {
+            if (idx === thirdSlots.length) return true;
+            const { matchId, eligible } = thirdSlots[idx];
+            for (const team of qualified) {
+              if (!team.teamId || !eligible.includes(team.group) || used.has(team.group)) continue;
+              used.add(team.group);
+              thirdMatching.set(matchId, team.teamId);
+              if (findThirdMatching(idx + 1, used)) return true;
+              used.delete(team.group);
+              thirdMatching.delete(matchId);
+            }
+            return false;
+          }
+          findThirdMatching(0, new Set<string>());
+          thirdMatching.forEach((teamId, matchId) => assign(matchId, 'awayTeamId', teamId));
+        }
+
+        // ── Propaga vencedores/perdedores entre todas as fases eliminatórias ──
+        KNOCKOUT_PROPAGATION.forEach(({ src, outcome, dst, side }) => {
+          const srcMatch = updatedMatches[src];
+          if (!srcMatch) return;
+          const teamId = outcome === 'winner' ? getMatchWinner(srcMatch) : getMatchLoser(srcMatch);
+          assign(dst, side, teamId);
+        });
+
+        if (changed) set({ matches: updatedMatches });
+      },
 
       getAllThirdPlace: () => {
         return GROUPS.map(g => {
@@ -85,21 +330,93 @@ export const useTournamentStore = create<TournamentState>()(
 
       syncFromSupabase: async () => {
         if (!isSupabaseConfigured) return;
-        const { data } = await supabase.from('match_results').select('*');
-        if (!data) return;
-        set(state => {
-          const updated = { ...state.matches };
-          data.forEach((r: { match_id: string; home_score: number; away_score: number; home_penalties: number | null; away_penalties: number | null }) => {
-            if (updated[r.match_id]) {
-              updated[r.match_id] = { ...updated[r.match_id], homeScore: r.home_score, awayScore: r.away_score, homePenalties: r.home_penalties, awayPenalties: r.away_penalties, played: true };
-            }
+
+        // Retry até 3× com backoff — necessário quando o Supabase (free tier) acorda do sleep
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const timeoutMs = attempt === 1 ? 8000 : 14000; // mais fôlego nas retentativas
+          const { data, error } = await sq(supabase.from('match_results').select('*'), timeoutMs);
+
+          if (error) {
+            console.warn(`[tournamentStore] syncFromSupabase tentativa ${attempt}/3:`, error.message);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
+            continue;
+          }
+
+          // Aplica resultados, times do mata-mata e limpa partidas resetadas no BD
+          const rows = data ?? [];
+
+          // Mapa indexado por match_id para lookup O(1)
+          type DbRow = {
+            match_id: string;
+            home_score: number | null;
+            away_score: number | null;
+            home_penalties: number | null;
+            away_penalties: number | null;
+            home_team_id: string | null;
+            away_team_id: string | null;
+          };
+          const dbMap = new Map<string, DbRow>(
+            rows.map((r: DbRow) => [r.match_id, r])
+          );
+
+          set(state => {
+            const updated = { ...state.matches };
+
+            // 1. Aplica scores e times vindos do BD
+            dbMap.forEach((r, matchId) => {
+              if (!updated[matchId]) return;
+              const patch: Partial<typeof updated[string]> = {};
+
+              // Scores (só aplica se ambos presentes)
+              if (r.home_score !== null && r.away_score !== null) {
+                patch.homeScore     = r.home_score;
+                patch.awayScore     = r.away_score;
+                patch.homePenalties = r.home_penalties;
+                patch.awayPenalties = r.away_penalties;
+                patch.played        = true;
+              }
+
+              // Times do mata-mata (persiste override do admin)
+              if (r.home_team_id) patch.homeTeamId = r.home_team_id;
+              if (r.away_team_id) patch.awayTeamId = r.away_team_id;
+
+              updated[matchId] = { ...updated[matchId], ...patch };
+            });
+
+            // 2. Zera partidas que estavam jogadas localmente mas sem score no BD
+            Object.keys(updated).forEach(matchId => {
+              const dbRow = dbMap.get(matchId);
+              const hasDbScore = dbRow && dbRow.home_score !== null && dbRow.away_score !== null;
+              if (updated[matchId].played && !hasDbScore) {
+                updated[matchId] = {
+                  ...updated[matchId],
+                  homeScore: null, awayScore: null,
+                  homePenalties: null, awayPenalties: null,
+                  played: false,
+                };
+              }
+            });
+
+            return { matches: updated };
           });
-          return { matches: updated };
-        });
+
+          // Auto-popula chaveamento com os dados sincronizados
+          get().autoPopulateKnockout();
+          return; // sucesso — sai do loop
+        }
+
+        console.error('[tournamentStore] syncFromSupabase falhou após 3 tentativas');
       },
     }),
     {
-      name: 'bolao-tournament',
+      name: 'bolao-tournament-v2',
+      version: 1,
+      migrate: (persisted, version) => {
+        // version < 1 = cache gerado antes do sistema de versioning;
+        // força reset para garantir que matches.ts atualizado seja usado.
+        if (version < 1) return { matches: initialMatches };
+        return persisted as TournamentState;
+      },
       partialize: (s) => ({ matches: s.matches }),
     }
   )

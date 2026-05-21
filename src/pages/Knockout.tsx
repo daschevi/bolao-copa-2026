@@ -1,34 +1,45 @@
 import { useMemo, useState } from 'react';
 import { BracketMatch } from '../components/BracketMatch';
 import { useTournamentStore } from '../store/tournamentStore';
+import { useAuthStore } from '../store/authStore';
+import { usePhaseSettingsStore, type StageKey } from '../store/phaseSettingsStore';
 import { TEAMS_BY_ID, TEAMS } from '../data/teams';
 
-type KnockoutStage = 'r32' | 'r16' | 'qf' | 'sf' | 'final';
+type KnockoutStage = 'r32' | 'r16' | 'qf' | 'sf' | 'third' | 'final';
 
-const STAGES: { id: KnockoutStage; label: string }[] = [
-  { id: 'r32', label: 'Oitavas' },
-  { id: 'r16', label: 'Quartas' },
-  { id: 'qf', label: 'Semifinal' },
-  { id: 'sf', label: 'Semi / 3º' },
+const ALL_STAGES: { id: KnockoutStage; label: string }[] = [
+  { id: 'r32',   label: 'Segunda Fase' },
+  { id: 'r16',   label: 'Oitavas' },
+  { id: 'qf',    label: 'Quartas' },
+  { id: 'sf',    label: 'Semifinal' },
+  { id: 'third', label: '3º Lugar' },
   { id: 'final', label: 'Final' },
 ];
 
 export function Knockout() {
   const { matches, setKnockoutTeams } = useTournamentStore();
+  const { profile } = useAuthStore();
+  const isAdmin = profile?.isAdmin ?? false;
+  const { phases } = usePhaseSettingsStore();
+
+  // Admin vê todas as abas; usuário comum só vê as fases visíveis
+  const STAGES = useMemo(
+    () => isAdmin ? ALL_STAGES : ALL_STAGES.filter(s => phases[s.id as StageKey]?.visible !== false),
+    [isAdmin, phases]
+  );
+
   const [activeStage, setActiveStage] = useState<KnockoutStage>('r32');
   const [editMatch, setEditMatch] = useState<string | null>(null);
   const [selectedHome, setSelectedHome] = useState('');
   const [selectedAway, setSelectedAway] = useState('');
 
+  // Se o activeStage atual ficou oculto, muda para a primeira aba disponível
+  const effectiveStage: KnockoutStage =
+    STAGES.find(s => s.id === activeStage) ? activeStage : (STAGES[0]?.id ?? 'r32');
+
   const stageMatches = useMemo(() => {
-    if (activeStage === 'sf') {
-      return Object.values(matches).filter(m => m.stage === 'sf' || m.stage === 'third');
-    }
-    if (activeStage === 'final') {
-      return Object.values(matches).filter(m => m.stage === 'final');
-    }
-    return Object.values(matches).filter(m => m.stage === activeStage);
-  }, [matches, activeStage]);
+    return Object.values(matches).filter(m => m.stage === effectiveStage);
+  }, [matches, effectiveStage]);
 
   const winner = useMemo(() => {
     const final = Object.values(matches).find(m => m.stage === 'final');
@@ -49,7 +60,11 @@ export function Knockout() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
-      <h1 className="text-2xl font-bold text-white mb-4">Fase Eliminatória</h1>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <h1 className="text-2xl font-black text-white uppercase" style={{ fontStyle: 'italic' }}>
+          Fase Eliminatória ⚡
+        </h1>
+      </div>
 
       {winner && (
         <div className="card mb-6 text-center bg-gradient-to-r from-copa-navy to-slate-800 border-copa-gold">
@@ -59,14 +74,26 @@ export function Knockout() {
       )}
 
       {/* Stage tabs */}
+      {STAGES.length === 0 ? (
+        <div className="flex flex-col items-center justify-center min-h-[30vh] gap-3">
+          <div className="text-5xl">🔒</div>
+          <p className="text-gray-500 text-sm text-center">
+            Nenhuma fase eliminatória disponível no momento.
+          </p>
+        </div>
+      ) : (
+      <>
       <div className="flex gap-2 mb-6 overflow-x-auto pb-1">
         {STAGES.map(s => (
           <button
             key={s.id}
             onClick={() => setActiveStage(s.id)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${activeStage === s.id ? 'bg-copa-green text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${effectiveStage === s.id ? 'bg-copa-green text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
           >
             {s.label}
+            {isAdmin && phases[s.id as StageKey]?.visible === false && (
+              <span className="ml-1 text-[10px] opacity-60">🔒</span>
+            )}
           </button>
         ))}
       </div>
@@ -75,13 +102,15 @@ export function Knockout() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {stageMatches.map(m => (
           <div key={m.id} className="space-y-1">
-            <BracketMatch match={m} label={m.id} />
-            <button
-              onClick={() => { setEditMatch(m.id); setSelectedHome(m.homeTeamId ?? ''); setSelectedAway(m.awayTeamId ?? ''); }}
-              className="text-xs text-gray-500 hover:text-copa-green transition-colors w-full text-center"
-            >
-              Definir times
-            </button>
+            <BracketMatch match={m} />
+            {isAdmin && (
+              <button
+                onClick={() => { setEditMatch(m.id); setSelectedHome(m.homeTeamId ?? ''); setSelectedAway(m.awayTeamId ?? ''); }}
+                className="text-xs text-gray-600 hover:text-copa-green transition-colors w-full text-center py-0.5"
+              >
+                ✎ ajustar times
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -113,6 +142,8 @@ export function Knockout() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
