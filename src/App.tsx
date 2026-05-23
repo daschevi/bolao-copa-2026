@@ -61,13 +61,17 @@ export default function App() {
   }, [sessionChecked, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-sync quando o usuário volta ao app (minimizou, trocou de aba, desbloqueou).
-  // Drena outbox primeiro — se a aba estava em background com palpites pendentes,
-  // ela acorda e re-tenta antes de qualquer leitura, garantindo que o fetch
-  // seguinte já enxergue os dados que acabaram de subir.
+  // Renova o JWT antes de drenar: se o app ficou em background por > 1h no mobile,
+  // o timer de auto-refresh do Supabase JS não disparou e o token pode ter expirado.
+  // Drenar com JWT expirado causaria 401 em todas as ops da outbox sem sincronizar.
   useEffect(() => {
     if (!profile) return;
     const onVisible = async () => {
       if (document.visibilityState === 'visible') {
+        // Força renovação do token antes de drenar — cobre background longo no mobile
+        if (isSupabaseConfigured) {
+          try { await supabase.auth.refreshSession(); } catch { /* ignora */ }
+        }
         await drainOutbox();
         syncFromSupabase();
         fetchAllBets();

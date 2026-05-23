@@ -154,6 +154,29 @@ async function executeOp(op: OutboxOp): Promise<{ error: { message: string } | n
   return supabase.from(op.table).delete().eq(op.match.column, op.match.value);
 }
 
+/** Retorna true se a mensagem de erro indica JWT expirado. */
+function isJwtExpiredError(msg: string): boolean {
+  const m = (msg ?? '').toLowerCase();
+  return m.includes('jwt expired') || m.includes('pgrst301') || m.includes('token is expired');
+}
+
+/**
+ * Tenta renovar o token de acesso via refresh token.
+ * Retorna true se a renovação foi bem-sucedida (ou token ainda válido),
+ * false se não há sessão ou o refresh falhou.
+ */
+async function tryRefreshToken(): Promise<boolean> {
+  if (!isSupabaseConfigured) return false;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return false;
+    const { error } = await supabase.auth.refreshSession();
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Persiste uma operação no Supabase. Sempre passa pela outbox:
  *   1. Enfileira em localStorage (escrita é durável a partir desse ponto)
@@ -208,6 +231,19 @@ export async function persistOp(
         onError?.(lastErrorMsg);
         return;
       }
+      // JWT expirado: renova o token antes da próxima tentativa.
+      // Cobre o cenário de app em background no mobile por > 1h sem auto-refresh.
+      if (isJwtExpiredError(lastErrorMsg)) {
+        console.warn(`[${label}] JWT expirado — renovando token antes da próxima tentativa`);
+        const refreshed = await tryRefreshToken();
+        if (!refreshed) {
+          // Refresh token também expirado — não adianta re-tentar agora
+          bumpAttempts(id);
+          console.warn(`[${label}] refresh falhou — op permanece na outbox para próxima sessão`);
+          onError?.('Sessão expirada. Faça login novamente para sincronizar.');
+          return;
+        }
+      }
       console.warn(`[${label}] tentativa ${attempt}/${retries}:`, lastErrorMsg);
     } catch (e) {
       lastErrorMsg = String(e);
@@ -235,9 +271,23 @@ export async function drainOutbox(): Promise<void> {
   const ops = readOutbox();
   if (ops.length === 0) return;
 
+  // Garante sessão ativa antes de executar writes.
+  // Se não houver sessão, as ops ficam na outbox para o próximo drain
+  // (que ocorre após login, visibilitychange ou reconexão de rede).
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.warn('[outbox] sem sessão ativa — drenagem adiada');
+      return;
+    }
+  } catch { /* se a verificação falhar, tenta drenar mesmo assim */ }
+
   _draining = true;
   try {
     console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
+    // Flag: se encontrarmos JWT expirado, renovamos uma vez e relemos as ops.
+    let jwtRefreshedThisRun = false;
+
     for (const op of ops) {
       if (op.attempts >= MAX_ATTEMPTS) {
         console.warn(`[outbox:${op.label}] descartando após ${op.attempts} tentativas`);
@@ -258,6 +308,35 @@ export async function drainOutbox(): Promise<void> {
           // Erro permanente: re-tentar nunca vai resolver — descarta agora
           removeFromOutbox(op.id);
           console.error(`[outbox:${op.label}] erro permanente, descartando:`, result.error.message);
+        } else if (isJwtExpiredError(result.error.message) && !jwtRefreshedThisRun) {
+          // JWT expirado durante o drain (app voltou do background).
+          // Renova o token uma vez por ciclo de drenagem e re-tenta esta op.
+          console.warn('[outbox] JWT expirado — renovando token e re-tentando op');
+          jwtRefreshedThisRun = true;
+          const refreshed = await tryRefreshToken();
+          if (!refreshed) {
+            console.warn('[outbox] refresh falhou — drenagem interrompida até próxima sessão');
+            break; // abandona este ciclo; ops ficam na outbox
+          }
+          // Re-tenta esta op com o token novo
+          try {
+            const retryResult = await Promise.race([
+              executeOp(op),
+              new Promise<{ error: { message: string } }>(r =>
+                setTimeout(() => r({ error: { message: 'timeout' } }), 10000)
+              ),
+            ]);
+            if (!retryResult.error) {
+              removeFromOutbox(op.id);
+              console.log(`[outbox:${op.label}] reenviado com sucesso após refresh`);
+            } else {
+              bumpAttempts(op.id);
+              console.warn(`[outbox:${op.label}] ainda falha após refresh:`, retryResult.error.message);
+            }
+          } catch (e) {
+            bumpAttempts(op.id);
+            console.warn(`[outbox:${op.label}] exceção após refresh:`, e);
+          }
         } else {
           bumpAttempts(op.id);
           console.warn(`[outbox:${op.label}] ainda falha:`, result.error.message);

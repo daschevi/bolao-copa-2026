@@ -95,9 +95,29 @@ export const useAuthStore = create<AuthState>()(
         }, 8000);
 
         supabase.auth.getSession().then(async ({
-          data: { session },
+          data: { session: rawSession },
         }: { data: { session: import('@supabase/supabase-js').Session | null } }) => {
           clearTimeout(sessionTimeout);
+
+          // Fix: getSession() devolve o JWT do localStorage sem validar se
+          // ainda é válido. Se o app ficou em background por > 1h no mobile,
+          // o timer de auto-refresh do Supabase JS não disparou e o token
+          // expirou. Renova agora — antes de setar sessionChecked=true — para
+          // garantir que o drainOutbox() que roda logo em seguida use um token
+          // fresco e as ops da outbox subam de vez.
+          let session = rawSession;
+          if (session?.expires_at) {
+            const expiresAt = session.expires_at * 1000; // expires_at é em segundos
+            const isStale   = Date.now() > expiresAt - 30_000; // 30s de margem
+            if (isStale) {
+              try {
+                const { data } = await supabase.auth.refreshSession();
+                if (data.session) session = data.session;
+                // Se refresh falhou (refresh token expirado), session fica null
+                // e o usuário será redirecionado para o login abaixo.
+              } catch { /* ignora — tratado abaixo como session nula */ }
+            }
+          }
 
           if (!session?.user) {
             // Se há profile cacheado mas o JWT/refresh token expirou,

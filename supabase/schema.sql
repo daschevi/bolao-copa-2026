@@ -23,10 +23,13 @@ create table public.bets (
 );
 
 -- Official match results (admin only)
+-- home_score / away_score são nullable: setKnockoutTeams faz upsert apenas com
+-- home_team_id / away_team_id (sem placar) quando os times são propagados
+-- automaticamente antes do resultado ser registrado.
 create table public.match_results (
   match_id text primary key,
-  home_score integer not null,
-  away_score integer not null,
+  home_score integer,        -- nullable: pode existir linha só com times
+  away_score integer,        -- nullable: pode existir linha só com times
   home_penalties integer,
   away_penalties integer,
   home_team_id text,
