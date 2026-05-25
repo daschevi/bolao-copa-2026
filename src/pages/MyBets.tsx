@@ -28,7 +28,13 @@ export function MyBets() {
 
   if (!profile) return <div className="text-center py-20 text-gray-400">Faça login para ver seus palpites.</div>;
 
-  const pending = userBets.filter(b => !matches[b.matchId]?.played);
+  // Palpites pendentes: jogo ainda não encerrado E com os dois times definidos.
+  // Jogos TBD (homeTeamId ou awayTeamId nulo) são excluídos — o usuário não tem
+  // controle sobre eles e exibi-los como "pendentes" é confuso.
+  const pending = userBets.filter(b => {
+    const m = matches[b.matchId];
+    return m && !m.played && !!m.homeTeamId && !!m.awayTeamId;
+  });
   const finished = userBets.filter(b => matches[b.matchId]?.played);
 
   return (

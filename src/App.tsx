@@ -50,16 +50,26 @@ export default function App() {
   // Seletores granulares: assinar só o que cada effect/render usa.
   // Antes (destructuring) o componente re-renderizava a cada `set` em qualquer
   // store, disparando re-runs desnecessários dos useEffects de deps mutáveis.
-  const profile          = useAuthStore(s => s.profile);
-  const sessionChecked   = useAuthStore(s => s.sessionChecked);
-  const initAuth         = useAuthStore(s => s.initAuth);
-  const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
-  const fetchAllBets     = useBetsStore(s => s.fetchAllBets);
-  const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
+  const profile                  = useAuthStore(s => s.profile);
+  const sessionChecked           = useAuthStore(s => s.sessionChecked);
+  const initAuth                 = useAuthStore(s => s.initAuth);
+  const checkConnectionOrLogout  = useAuthStore(s => s.checkConnectionOrLogout);
+  const sessionExpiredMessage    = useAuthStore(s => s.sessionExpiredMessage);
+  const clearSessionMessage      = useAuthStore(s => s.clearSessionExpiredMessage);
+  const syncFromSupabase         = useTournamentStore(s => s.syncFromSupabase);
+  const fetchAllBets             = useBetsStore(s => s.fetchAllBets);
+  const syncPhaseSettings        = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
   // Ref compartilhado: permite que o handler de visibilitychange chame
   // checkAndReconnect() do useEffect do Realtime sem acoplamento de estado.
   const reconnectRealtimeRef = useRef<(() => void) | null>(null);
+
+  // Auto-dismiss do toast de sessão expirada após 6 s
+  useEffect(() => {
+    if (!sessionExpiredMessage) return;
+    const t = setTimeout(clearSessionMessage, 6000);
+    return () => clearTimeout(t);
+  }, [sessionExpiredMessage, clearSessionMessage]);
 
   // Inicialização: apenas dispara initAuth.
   // drainOutbox é proposital mente adiado para o effect de sessionChecked —
@@ -106,15 +116,12 @@ export default function App() {
     const onVisible = async () => {
       if (document.visibilityState !== 'visible') return;
 
-      // 1. Renova JWT e atualiza WebSocket Realtime — cobre background > 1h no mobile
-      if (isSupabaseConfigured) {
-        try {
-          const { data } = await supabase.auth.refreshSession();
-          if (data.session?.access_token) {
-            supabase.realtime.setAuth(data.session.access_token);
-          }
-        } catch { /* ignora */ }
-      }
+      // 1. Verifica/renova sessão — se o refresh token expirou (sessão morta),
+      //    faz logout + exibe toast e aborta: não adianta sincronizar dados.
+      //    Se a sessão está viva, checkConnectionOrLogout() também atualiza o
+      //    JWT do WebSocket Realtime (setAuth) para evitar re-conexões futuras.
+      const sessionOk = await checkConnectionOrLogout();
+      if (!sessionOk) return;
 
       // 2. Cache expirado (> 1h sem sync): descarta bets locais antes de re-buscar.
       //    Evita que o usuário leia e confie em dados com mais de 1h de idade
@@ -284,19 +291,42 @@ export default function App() {
   }
 
   return (
-    <HashRouter>
-      {profile && <Navbar />}
-      <Routes>
-        <Route path="/login"         element={profile ? <Navigate to="/grupos" replace /> : <Login />} />
-        {/* /cadastro redirecionado — login apenas via Google corporativo */}
-        <Route path="/cadastro"      element={<Navigate to="/login" replace />} />
-        <Route path="/grupos"        element={<RequireAuth><Groups /></RequireAuth>} />
-        <Route path="/chaveamento"   element={<RequireAuth><Knockout /></RequireAuth>} />
-        <Route path="/meus-palpites" element={<RequireAuth><MyBets /></RequireAuth>} />
-        <Route path="/classificacao" element={<RequireAuth><Leaderboard /></RequireAuth>} />
-        <Route path="/regras"        element={<RequireAuth><Rules /></RequireAuth>} />
-        <Route path="*"              element={<Navigate to={profile ? '/grupos' : '/login'} replace />} />
-      </Routes>
-    </HashRouter>
+    <>
+      <HashRouter>
+        {profile && <Navbar />}
+        <Routes>
+          <Route path="/login"         element={profile ? <Navigate to="/grupos" replace /> : <Login />} />
+          {/* /cadastro redirecionado — login apenas via Google corporativo */}
+          <Route path="/cadastro"      element={<Navigate to="/login" replace />} />
+          <Route path="/grupos"        element={<RequireAuth><Groups /></RequireAuth>} />
+          <Route path="/chaveamento"   element={<RequireAuth><Knockout /></RequireAuth>} />
+          <Route path="/meus-palpites" element={<RequireAuth><MyBets /></RequireAuth>} />
+          <Route path="/classificacao" element={<RequireAuth><Leaderboard /></RequireAuth>} />
+          <Route path="/regras"        element={<RequireAuth><Rules /></RequireAuth>} />
+          <Route path="*"              element={<Navigate to={profile ? '/grupos' : '/login'} replace />} />
+        </Routes>
+      </HashRouter>
+
+      {/* Toast de sessão expirada — renderizado fora do Router para sobreviver
+          à troca de rota que ocorre imediatamente após o logout. */}
+      {sessionExpiredMessage && (
+        <div className="fixed bottom-4 left-0 right-0 flex justify-center px-4 z-[100]">
+          <div
+            className="flex items-center gap-3 rounded-xl px-4 py-3 shadow-xl w-full max-w-sm"
+            style={{ background: '#1C0A0A', border: '1px solid #EF444450' }}
+          >
+            <span className="text-xl shrink-0">⚠️</span>
+            <span className="text-sm flex-1" style={{ color: '#FCA5A5' }}>
+              {sessionExpiredMessage}
+            </span>
+            <button
+              onClick={clearSessionMessage}
+              className="shrink-0 leading-none hover:opacity-70"
+              style={{ color: '#F87171' }}
+            >✕</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

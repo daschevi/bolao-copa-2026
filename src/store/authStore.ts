@@ -67,10 +67,27 @@ interface AuthState {
   error: string | null;
   /** true assim que a verificação inicial de sessão terminar (com ou sem sessão ativa) */
   sessionChecked: boolean;
+  /**
+   * Mensagem de feedback para o toast de sessão expirada.
+   * Setada por checkConnectionOrLogout quando o refresh token está morto.
+   * Limpa pelo próprio usuário (✕) ou pelo auto-dismiss de 6 s.
+   * NÃO persistida no localStorage — é estado transitório de UI.
+   */
+  sessionExpiredMessage: string | null;
   initAuth: () => () => void;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  clearSessionExpiredMessage: () => void;
+  /**
+   * Tenta renovar o token de acesso via refreshSession().
+   * - Sucesso → atualiza JWT do WebSocket Realtime e retorna true
+   * - Falha  → chama logout(), seta `sessionExpiredMessage` e retorna false
+   *
+   * Chamar antes de qualquer escrita (palpite) e no visibilitychange.
+   * Evita que writes tenham RLS-error silencioso por JWT expirado sem feedback.
+   */
+  checkConnectionOrLogout: () => Promise<boolean>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -80,6 +97,7 @@ export const useAuthStore = create<AuthState>()(
       loading: false,
       error: null,
       sessionChecked: false,
+      sessionExpiredMessage: null,
 
       initAuth: () => {
         if (!isSupabaseConfigured) {
@@ -239,6 +257,29 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearError: () => set({ error: null }),
+
+      clearSessionExpiredMessage: () => set({ sessionExpiredMessage: null }),
+
+      checkConnectionOrLogout: async () => {
+        if (!isSupabaseConfigured) return true; // dev/CI sem .env — sempre ok
+
+        try {
+          const { data, error } = await supabase.auth.refreshSession();
+          if (!error && data.session) {
+            // Propaga token renovado para o WebSocket do Realtime
+            // (o auto-refresh HTTP não atualiza o WS automaticamente).
+            supabase.realtime.setAuth(data.session.access_token);
+            return true;
+          }
+        } catch { /* fall through */ }
+
+        // Refresh token expirado ou inválido — sessão definitivamente morta.
+        // Faz logout limpo antes de setar a mensagem para garantir que o
+        // toast apareça após a limpeza de estado (evita flash de dados velhos).
+        await get().logout();
+        set({ sessionExpiredMessage: 'Sua sessão expirou. Faça login novamente para continuar.' });
+        return false;
+      },
     }),
     { name: 'bolao-auth', partialize: (s) => ({ profile: s.profile }) }
   )
