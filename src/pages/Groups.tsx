@@ -72,10 +72,10 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
       className="rounded-xl overflow-hidden"
       style={{ background: '#111111', border: '1px solid #1F1F1F' }}
     >
-      <div className="flex flex-col lg:flex-row">
+      <div className="flex flex-col">
         {/* ── Classificação ── */}
         <div
-          className="lg:w-[640px] shrink-0 p-4 border-b lg:border-b-0 lg:border-r"
+          className="p-4 border-b"
           style={{ borderColor: '#1F1F1F' }}
         >
           <table className="w-full text-xs">
@@ -147,10 +147,8 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
         </div>
 
         {/* ── Partidas da rodada ── */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          {/* Navigator: topo da coluna de partidas.
-              Em flex-col (mobile) esta coluna fica abaixo da standings,
-              então o navigator aparece naturalmente entre tabela e jogos. */}
+        <div className="flex flex-col">
+          {/* Navigator sempre acima dos jogos — layout em coluna única */}
           <RoundNavigator
             activeRound={activeRound}
             setActiveRound={setActiveRound}
