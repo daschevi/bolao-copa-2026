@@ -19,6 +19,33 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// ── Estratégia de expiração de cache ─────────────────────────────────────────
+//
+// Rastreia quando foi o último sync bem-sucedido por usuário.
+// TTL de 1h: alinhado com o tempo de expiração do JWT do Supabase — se o
+// cache não foi atualizado dentro desse período, não pode ser confiável.
+// Chave por usuário: evita que o timestamp de um usuário afete o próximo.
+//
+// Uso:
+//   - `markSyncDone(userId)` → chamado após cada ciclo de sync concluído
+//   - `isSyncStale(userId)`  → true se > 1h sem sync bem-sucedido
+//   - Em `visibilitychange` com cache expirado: descarta bets locais antes
+//     de re-buscar, evitando que o usuário veja dados velhos com confiança.
+//     (No boot o splash cobre o período de loading — não precisamos limpar.)
+
+const SYNC_TTL_MS = 60 * 60 * 1000; // 1 hora
+
+const syncKey = (userId: string) => `bolao-sync-${userId}`;
+
+function isSyncStale(userId: string): boolean {
+  const ts = Number(localStorage.getItem(syncKey(userId)) ?? '0');
+  return Date.now() - ts > SYNC_TTL_MS;
+}
+
+function markSyncDone(userId: string): void {
+  localStorage.setItem(syncKey(userId), String(Date.now()));
+}
+
 export default function App() {
   // Seletores granulares: assinar só o que cada effect/render usa.
   // Antes (destructuring) o componente re-renderizava a cada `set` em qualquer
@@ -40,50 +67,74 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Após sessão verificada: drena outbox (agora com auth.uid() disponível)
-  // e sincroniza tudo.
+  // e sincroniza tudo. Marca o timestamp de sync após conclusão para que o
+  // handler de visibilitychange saiba que o cache está fresco.
   useEffect(() => {
     if (!sessionChecked) return;
-    drainOutbox();          // sessão já foi restaurada — RLS vai funcionar
-    syncFromSupabase();
-    if (profile) {
-      fetchAllBets();
-      syncPhaseSettings();
-    }
+
+    const runSync = async () => {
+      await drainOutbox();
+      await Promise.allSettled([
+        syncFromSupabase(),
+        ...(profile ? [fetchAllBets(), syncPhaseSettings()] : []),
+      ]);
+      if (profile) markSyncDone(profile.id);
+    };
+
+    runSync();
+
     // Segundo sync após 15s — cobre cold start do Supabase free tier
-    const retryTimer = setTimeout(() => {
-      syncFromSupabase();
-      if (profile) {
-        fetchAllBets();
-        syncPhaseSettings();
-      }
+    const retryTimer = setTimeout(async () => {
+      await Promise.allSettled([
+        syncFromSupabase(),
+        ...(profile ? [fetchAllBets(), syncPhaseSettings()] : []),
+      ]);
+      if (profile) markSyncDone(profile.id);
     }, 15000);
+
     return () => clearTimeout(retryTimer);
   }, [sessionChecked, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-sync quando o usuário volta ao app (minimizou, trocou de aba, desbloqueou).
-  // Renova o JWT antes de drenar: se o app ficou em background por > 1h no mobile,
-  // o timer de auto-refresh do Supabase JS não disparou e o token pode ter expirado.
-  // Drenar com JWT expirado causaria 401 em todas as ops da outbox sem sincronizar.
+  // Renova JWT + verifica se o cache expirou antes de re-buscar os dados.
   useEffect(() => {
     if (!profile) return;
     const onVisible = async () => {
-      if (document.visibilityState === 'visible') {
-        if (isSupabaseConfigured) {
-          try {
-            // Força renovação do JWT HTTP e atualiza o WebSocket Realtime
-            // explicitamente — o auto-refresh HTTP não garante que o WS receba
-            // o novo token a tempo, o que mantinha o canal em estado expirado.
-            const { data } = await supabase.auth.refreshSession();
-            if (data.session?.access_token) {
-              supabase.realtime.setAuth(data.session.access_token);
-            }
-          } catch { /* ignora */ }
-        }
-        await drainOutbox();
-        syncFromSupabase();
-        fetchAllBets();
-        syncPhaseSettings();
+      if (document.visibilityState !== 'visible') return;
+
+      // 1. Renova JWT e atualiza WebSocket Realtime — cobre background > 1h no mobile
+      if (isSupabaseConfigured) {
+        try {
+          const { data } = await supabase.auth.refreshSession();
+          if (data.session?.access_token) {
+            supabase.realtime.setAuth(data.session.access_token);
+          }
+        } catch { /* ignora */ }
       }
+
+      // 2. Cache expirado (> 1h sem sync): descarta bets locais antes de re-buscar.
+      //    Evita que o usuário leia e confie em dados com mais de 1h de idade
+      //    enquanto o fetch acontece. Bets com pendingPersist=true são preservados
+      //    (ainda estão em voo — serão re-enviados pela outbox).
+      //    Resultado das partidas não é limpo aqui: syncFromSupabase já zera via
+      //    hasPendingOutboxOpForMatch quando ausente no BD.
+      if (isSyncStale(profile.id)) {
+        console.log('[sync] cache expirado (> 1h) — descartando bets locais antes do re-sync');
+        useBetsStore.setState(state => ({
+          bets: Object.fromEntries(
+            Object.entries(state.bets).filter(([, bet]) => bet.pendingPersist)
+          ),
+        }));
+      }
+
+      // 3. Drena outbox e re-sincroniza tudo
+      await drainOutbox();
+      await Promise.allSettled([
+        syncFromSupabase(),
+        fetchAllBets(),
+        syncPhaseSettings(),
+      ]);
+      markSyncDone(profile.id);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
