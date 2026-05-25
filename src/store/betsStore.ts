@@ -77,9 +77,11 @@ export const useBetsStore = create<BetsState>()(
         const matches = useTournamentStore.getState().matches;
         let total = 0, exact = 0, correct = 0, totalBets = 0;
         userBets.forEach(b => {
-          totalBets++;
           const m = matches[b.matchId];
+          // Jogos sem resultado lançado não contam para nenhuma estatística
+          // (pontos, exatos, acertos ou contagem de palpites).
           if (!m?.played) return;
+          totalBets++;
           const pts = calcPoints(b, m);
           total += pts;
           if (pts === 3) exact++;
@@ -183,8 +185,10 @@ export const useBetsStore = create<BetsState>()(
       },
 
       getLeaderboard: (profiles) => {
-        const { getUserPoints } = get();
+        const { getUserPoints, getUserBets } = get();
         return profiles
+          // Exclui usuários que nunca registraram nenhum palpite
+          .filter(profile => getUserBets(profile.id).length > 0)
           .map(profile => {
             const stats = getUserPoints(profile.id);
             return {
