@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Login } from './pages/Login';
@@ -56,6 +56,10 @@ export default function App() {
   const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
   const fetchAllBets     = useBetsStore(s => s.fetchAllBets);
   const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
+
+  // Ref compartilhado: permite que o handler de visibilitychange chame
+  // checkAndReconnect() do useEffect do Realtime sem acoplamento de estado.
+  const reconnectRealtimeRef = useRef<(() => void) | null>(null);
 
   // Inicialização: apenas dispara initAuth.
   // drainOutbox é proposital mente adiado para o effect de sessionChecked —
@@ -127,7 +131,11 @@ export default function App() {
         }));
       }
 
-      // 3. Drena outbox e re-sincroniza tudo
+      // 3. Verifica canal Realtime imediatamente — se caiu durante o background,
+      //    reconecta agora em vez de esperar o próximo tick do keepalive (4 min).
+      reconnectRealtimeRef.current?.();
+
+      // 4. Drena outbox e re-sincroniza tudo
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
@@ -152,12 +160,16 @@ export default function App() {
   // Requer: no painel Supabase → Database → Replication → adicionar
   // match_results, bets e phase_settings à publication `supabase_realtime`.
   //
-  // Estratégia de reconexão automática:
-  //   - Canal cai (CHANNEL_ERROR / TIMED_OUT / CLOSED)
-  //       → sync manual imediato para não perder dados
-  //       → reconexão agendada em 5 s
-  //   - Reconexão usa Date.now() no nome para nunca reutilizar objeto corrompido
-  //   - Guards `mounted` + `reconnectTimer` evitam reconexões paralelas
+  // Estratégia de resiliência em duas camadas:
+  //
+  //   1. REATIVA (callback de status): canal cai com sinal explícito
+  //      (CHANNEL_ERROR / TIMED_OUT / CLOSED) → sync + reconexão em 5 s
+  //
+  //   2. PROATIVA (keepalive 4 min): canal fecha silenciosamente sem disparar
+  //      o callback — comum no free tier (~6 min idle timeout) e no mobile
+  //      em background. setInterval checa channel.state e reconecta se não
+  //      estiver 'joined'. visibilitychange também chama checkAndReconnect()
+  //      imediatamente ao voltar para o app.
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
 
@@ -168,7 +180,7 @@ export default function App() {
     const connect = () => {
       if (!mounted) return;
 
-      // Timestamp no nome: cada tentativa cria um canal novo, elimina ghost channels
+      // Timestamp no nome: cada tentativa cria um canal novo — elimina ghost channels
       // acumulados de ciclos rápidos de logout/login ou reconexão.
       const channelName = `bolao-${profile.id}-${Date.now()}`;
 
@@ -194,24 +206,15 @@ export default function App() {
             status === 'TIMED_OUT'     ||
             status === 'CLOSED'
           ) {
-            // Canal caiu (JWT expirado no WS, queda de rede, timeout do free tier etc.)
+            // Camada 1 — sinal explícito de queda
             console.warn('[realtime] canal perdido —', status, err?.message ?? '');
-
-            // 1. Sync manual: recupera eventos que chegaram com o canal fechado
             syncFromSupabase();
             fetchAllBets();
             syncPhaseSettings();
-
-            // 2. Reconexão automática após 5 s.
-            // `!reconnectTimer` evita agendar múltiplos timers se o status
-            // disparar em sequência (ex: TIMED_OUT seguido de CLOSED).
             if (mounted && !reconnectTimer) {
               reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
-                if (activeChannel) {
-                  supabase.removeChannel(activeChannel);
-                  activeChannel = null;
-                }
+                if (activeChannel) { supabase.removeChannel(activeChannel); activeChannel = null; }
                 connect();
               }, 5000);
             }
@@ -221,10 +224,38 @@ export default function App() {
       activeChannel = ch;
     };
 
+    // Camada 2 — verifica estado real do canal e reconecta se necessário.
+    // Exposta via ref para uso no handler de visibilitychange (cross-useEffect).
+    const checkAndReconnect = () => {
+      if (!mounted) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const state = (activeChannel as any)?.state as string | undefined;
+      // 'joined' = conectado e recebendo eventos. 'joining' = em processo de conexão.
+      if (state !== 'joined' && state !== 'joining') {
+        console.warn('[realtime] keepalive: estado', state ?? 'null', '— reconectando');
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        if (activeChannel) { supabase.removeChannel(activeChannel); activeChannel = null; }
+        // Sync manual para recuperar eventos perdidos durante o período offline
+        syncFromSupabase();
+        fetchAllBets();
+        syncPhaseSettings();
+        connect();
+      }
+    };
+
+    // Disponibiliza para o handler de visibilitychange sem acoplamento de estado
+    reconnectRealtimeRef.current = checkAndReconnect;
+
     connect();
+
+    // Keepalive a cada 4 min: detecta timeout silencioso (~6 min no free tier)
+    // antes que o próximo visibilitychange ou ação do usuário o exponha.
+    const keepaliveTimer = setInterval(checkAndReconnect, 4 * 60 * 1000);
 
     return () => {
       mounted = false;
+      reconnectRealtimeRef.current = null;
+      clearInterval(keepaliveTimer);
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       if (activeChannel) { supabase.removeChannel(activeChannel); activeChannel = null; }
     };
