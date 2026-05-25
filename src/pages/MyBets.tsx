@@ -64,16 +64,16 @@ export function MyBets() {
               const pts = calcPoints(b, m);
               const ptsColor = pts === 3 ? 'text-green-400 bg-green-900/30' : pts === 1 ? 'text-yellow-400 bg-yellow-900/30' : 'text-red-400 bg-red-900/30';
               return (
-                <div key={b.matchId} className="card flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div key={b.matchId} className="card flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
                     {homeTeam && <Flag code={homeTeam.code} name={homeTeam.name} size="sm" />}
                     <span className="text-xs text-gray-300 truncate">{homeTeam?.name ?? 'TBD'}</span>
-                    <span className="font-bold text-white text-sm">{m.homeScore}–{m.awayScore}</span>
+                    <span className="font-bold text-white text-sm shrink-0 whitespace-nowrap">{m.homeScore}–{m.awayScore}</span>
                     <span className="text-xs text-gray-300 truncate">{awayTeam?.name ?? 'TBD'}</span>
                     {awayTeam && <Flag code={awayTeam.code} name={awayTeam.name} size="sm" />}
                   </div>
                   <div className="text-xs text-gray-500 shrink-0">
-                    Palpite: {b.homeScore}×{b.awayScore}
+                    Pal: {b.homeScore}×{b.awayScore}
                   </div>
                   <div className={`text-sm font-bold px-2 py-0.5 rounded ${ptsColor} shrink-0`}>
                     +{pts}
@@ -94,15 +94,15 @@ export function MyBets() {
               const homeTeam = m.homeTeamId ? TEAMS_BY_ID[m.homeTeamId] : null;
               const awayTeam = m.awayTeamId ? TEAMS_BY_ID[m.awayTeamId] : null;
               return (
-                <div key={b.matchId} className="card flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div key={b.matchId} className="card flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
                     {homeTeam && <Flag code={homeTeam.code} name={homeTeam.name} size="sm" />}
                     <span className="text-xs text-gray-300 truncate">{homeTeam?.name ?? 'TBD'}</span>
-                    <span className="text-gray-500 text-sm">vs</span>
+                    <span className="text-gray-500 text-sm shrink-0">vs</span>
                     <span className="text-xs text-gray-300 truncate">{awayTeam?.name ?? 'TBD'}</span>
                     {awayTeam && <Flag code={awayTeam.code} name={awayTeam.name} size="sm" />}
                   </div>
-                  <div className="text-sm font-medium text-copa-gold shrink-0">{b.homeScore}×{b.awayScore}</div>
+                  <div className="text-sm font-medium text-copa-gold shrink-0 whitespace-nowrap">{b.homeScore}×{b.awayScore}</div>
                 </div>
               );
             })}

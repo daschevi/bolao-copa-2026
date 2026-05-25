@@ -46,13 +46,13 @@ export function Rules() {
 
         {/* Exemplo visual */}
         <div
-          className="rounded-xl p-4 mt-2 space-y-2"
+          className="rounded-xl p-4 mt-2 space-y-2 overflow-x-auto"
           style={{ background: '#0D0D0D', border: '1px solid #1F1F1F' }}
         >
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3">Exemplo</p>
-          <ExampleRow result="Brasil 2 × 1 Argentina" bet="2 × 1" points={3} />
-          <ExampleRow result="Brasil 2 × 1 Argentina" bet="3 × 0" points={1} />
-          <ExampleRow result="Brasil 2 × 1 Argentina" bet="1 × 2" points={0} />
+          <ExampleRow result="Brasil 2×1 Argentina" bet="2×1" points={3} />
+          <ExampleRow result="Brasil 2×1 Argentina" bet="3×0" points={1} />
+          <ExampleRow result="Brasil 2×1 Argentina" bet="1×2" points={0} />
         </div>
       </section>
 
@@ -151,15 +151,15 @@ function ExampleRow({
 }) {
   const color = points === 3 ? '#22C55E' : points === 1 ? '#FACC15' : '#6B7280';
   return (
-    <div className="flex items-center justify-between gap-2 text-xs">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-gray-500 shrink-0">Resultado:</span>
-        <span className="text-white font-semibold">{result}</span>
-        <span className="text-gray-600 shrink-0">· Palpite:</span>
-        <span className="text-gray-300 font-semibold">{bet}</span>
-      </div>
+    <div className="flex items-center gap-1.5 text-[10px] whitespace-nowrap">
+      <span className="text-gray-500 shrink-0">Res:</span>
+      <span className="text-white font-semibold shrink-0">{result}</span>
+      <span className="text-gray-600 shrink-0">·</span>
+      <span className="text-gray-500 shrink-0">Pal:</span>
+      <span className="text-gray-300 font-semibold shrink-0">{bet}</span>
+      <span className="flex-1" />
       <span
-        className="shrink-0 font-black px-2 py-0.5 rounded-lg"
+        className="shrink-0 font-black px-1.5 py-0.5 rounded-lg"
         style={{ background: `${color}20`, color, border: `1px solid ${color}40` }}
       >
         {points > 0 ? `+${points}` : '0'} pts
