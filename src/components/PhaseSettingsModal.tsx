@@ -80,9 +80,21 @@ export function PhaseSettingsModal({ onClose }: Props) {
               style={{ background: '#EF444418', border: '1px solid #EF444440', color: '#FCA5A5' }}
             >
               ⚠️ {saveError}
-              <p className="mt-1 opacity-70">
-                Verifique se a tabela <code>phase_settings</code> existe no Supabase.
-              </p>
+              {/tempo limite/i.test(saveError) && (
+                <p className="mt-1 opacity-70">
+                  O servidor pode estar iniciando (free tier). Aguarde alguns segundos e tente novamente.
+                </p>
+              )}
+              {/row-level security|permission denied/i.test(saveError) && (
+                <p className="mt-1 opacity-70">
+                  Sem permissão de escrita. Verifique se seu usuário tem <code>is_admin = true</code> na tabela profiles.
+                </p>
+              )}
+              {/relation .* does not exist|table .* does not exist/i.test(saveError) && (
+                <p className="mt-1 opacity-70">
+                  Tabela <code>phase_settings</code> não encontrada — execute o SQL de criação no Supabase.
+                </p>
+              )}
             </div>
           )}
           {saved && (
@@ -99,7 +111,7 @@ export function PhaseSettingsModal({ onClose }: Props) {
             </button>
           </div>
           <p className="mt-3 text-[10px] text-gray-600 text-center leading-relaxed">
-            Requer tabela <code>phase_settings</code> no Supabase — veja SQL nas instruções de deploy.
+            Persiste em <code>phase_settings</code> no Supabase · 3 tentativas automáticas em caso de falha.
           </p>
         </div>
       </div>

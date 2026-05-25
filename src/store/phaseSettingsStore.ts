@@ -75,16 +75,36 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
           updated_at:    new Date().toISOString(),
         }));
 
-        const { error } = await sq(
-          () => supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }),
-          12000
-        );
+        // Retry até 3× com backoff — cobre cold start do Supabase free tier
+        // (free tier dorme após inatividade; o 1º request pode levar >12s para acordar).
+        let lastError: string | null = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          // Timeouts progressivos: 1ª tentativa rápida, subsequentes mais generosas
+          const timeoutMs = attempt === 1 ? 12000 : 20000;
+          const { error } = await sq(
+            () => supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }),
+            timeoutMs
+          );
 
-        if (error) {
-          console.error('[phaseSettings] Erro ao salvar:', error.message);
-          return { error: error.message };
+          if (!error) return { error: null };
+
+          lastError = error.message;
+          console.warn(`[phaseSettings] savePhaseSettings tentativa ${attempt}/3:`, lastError);
+
+          // Erro permanente: re-tentar não vai resolver — aborta já
+          const lc = lastError.toLowerCase();
+          if (
+            /row-level security/.test(lc)  ||
+            /relation .* does not exist/.test(lc) ||
+            /column .* does not exist/.test(lc) ||
+            /pgrst204/.test(lc)
+          ) break;
+
+          if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
         }
-        return { error: null };
+
+        console.error('[phaseSettings] savePhaseSettings falhou após 3 tentativas:', lastError);
+        return { error: lastError ?? 'Erro desconhecido ao salvar.' };
       },
 
       syncPhaseSettings: async () => {
