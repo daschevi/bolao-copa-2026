@@ -182,16 +182,23 @@ function isJwtExpiredError(msg: string): boolean {
 
 /**
  * Tenta renovar o token de acesso via refresh token.
- * Retorna true se a renovação foi bem-sucedida (ou token ainda válido),
- * false se não há sessão ou o refresh falhou.
+ * Além de renovar o JWT HTTP, atualiza explicitamente o WebSocket do Realtime
+ * — o auto-refresh HTTP não garante que o WS receba o novo token a tempo,
+ * o que mantinha o canal Realtime em estado expirado/desconectado.
+ * Retorna true se a renovação foi bem-sucedida, false caso contrário.
  */
 async function tryRefreshToken(): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return false;
-    const { error } = await supabase.auth.refreshSession();
-    return !error;
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error || !data.session) return false;
+    // Propaga o novo token para o WebSocket do Realtime explicitamente.
+    // O Supabase JS notifica o Realtime via onAuthStateChange internamente,
+    // mas pode haver race condition — setAuth aqui garante a atualização.
+    supabase.realtime.setAuth(data.session.access_token);
+    return true;
   } catch {
     return false;
   }

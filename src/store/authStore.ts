@@ -112,7 +112,13 @@ export const useAuthStore = create<AuthState>()(
             if (isStale) {
               try {
                 const { data } = await supabase.auth.refreshSession();
-                if (data.session) session = data.session;
+                if (data.session) {
+                  session = data.session;
+                  // Propaga o novo token para o WebSocket do Realtime —
+                  // o canal pode ter sido criado antes do refresh e estaria
+                  // com JWT expirado até a próxima reconexão.
+                  supabase.realtime.setAuth(data.session.access_token);
+                }
                 // Se refresh falhou (refresh token expirado), session fica null
                 // e o usuário será redirecionado para o login abaixo.
               } catch { /* ignora — tratado abaixo como session nula */ }

@@ -68,9 +68,16 @@ export default function App() {
     if (!profile) return;
     const onVisible = async () => {
       if (document.visibilityState === 'visible') {
-        // Força renovação do token antes de drenar — cobre background longo no mobile
         if (isSupabaseConfigured) {
-          try { await supabase.auth.refreshSession(); } catch { /* ignora */ }
+          try {
+            // Força renovação do JWT HTTP e atualiza o WebSocket Realtime
+            // explicitamente — o auto-refresh HTTP não garante que o WS receba
+            // o novo token a tempo, o que mantinha o canal em estado expirado.
+            const { data } = await supabase.auth.refreshSession();
+            if (data.session?.access_token) {
+              supabase.realtime.setAuth(data.session.access_token);
+            }
+          } catch { /* ignora */ }
         }
         await drainOutbox();
         syncFromSupabase();
@@ -96,8 +103,14 @@ export default function App() {
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
 
+    // Nome único por usuário: evita que supabase.channel() retorne um objeto
+    // corrompido de uma sessão anterior com o mesmo nome fixo (ghost channel).
+    // O cleanup do removeChannel pode não completar antes do próximo channel()
+    // em ciclos rápidos de logout/login — nome único elimina esse risco.
+    const channelName = `bolao-${profile.id}`;
+
     const channel = supabase
-      .channel('bolao-realtime')
+      .channel(channelName)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'match_results' },
         () => { syncFromSupabase(); }
@@ -110,7 +123,24 @@ export default function App() {
         { event: '*', schema: 'public', table: 'phase_settings' },
         () => { syncPhaseSettings(); }
       )
-      .subscribe();
+      .subscribe((status: string, err?: Error) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[realtime] canal conectado:', channelName);
+        } else if (
+          status === 'CHANNEL_ERROR' ||
+          status === 'TIMED_OUT'     ||
+          status === 'CLOSED'
+        ) {
+          // Canal caiu silenciosamente (JWT expirado no WS, queda de rede etc.).
+          // Sem este callback, o app nunca saberia — eventos param de chegar e
+          // o usuário vê dados desatualizados sem nenhuma indicação.
+          // Fallback: sync manual imediato para não perder atualizações.
+          console.warn('[realtime] canal perdido —', status, err?.message ?? '');
+          syncFromSupabase();
+          fetchAllBets();
+          syncPhaseSettings();
+        }
+      });
 
     return () => { supabase.removeChannel(channel); };
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
