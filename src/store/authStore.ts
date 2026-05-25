@@ -80,12 +80,22 @@ interface AuthState {
   clearError: () => void;
   clearSessionExpiredMessage: () => void;
   /**
-   * Tenta renovar o token de acesso via refreshSession().
+   * Verifica se existe sessão ativa no localStorage — SEM requisição de rede.
+   * ⚡ getSession() lê da memória/localStorage: resposta < 1ms, não trava UI.
+   *
+   * - Sessão presente → retorna true (seguro prosseguir com a escrita)
+   * - Sessão ausente → seta toast "Sua conexão expirou..." e retorna false
+   *
+   * Usar antes de qualquer operação de escrita (palpite, resultado).
+   * Não faz logout — apenas bloqueia a ação e orienta o usuário a atualizar a página.
+   */
+  checkConnection: () => Promise<boolean>;
+  /**
+   * Verifica E renova o token via refreshSession() (com requisição de rede).
    * - Sucesso → atualiza JWT do WebSocket Realtime e retorna true
    * - Falha  → chama logout(), seta `sessionExpiredMessage` e retorna false
    *
-   * Chamar antes de qualquer escrita (palpite) e no visibilitychange.
-   * Evita que writes tenham RLS-error silencioso por JWT expirado sem feedback.
+   * Usar apenas no visibilitychange — a latência de rede é aceitável ali.
    */
   checkConnectionOrLogout: () => Promise<boolean>;
 }
@@ -259,6 +269,20 @@ export const useAuthStore = create<AuthState>()(
       clearError: () => set({ error: null }),
 
       clearSessionExpiredMessage: () => set({ sessionExpiredMessage: null }),
+
+      checkConnection: async () => {
+        if (!isSupabaseConfigured) return true; // dev/CI sem .env — sempre ok
+        try {
+          // getSession() lê da memória/localStorage sem requisição de rede.
+          // Resolução < 1ms: não trava a UI nem bloqueia o clique do usuário.
+          const { data, error } = await supabase.auth.getSession();
+          if (!error && data.session) return true;
+        } catch { /* fall through */ }
+        // Sessão ausente → bloqueia a escrita e orienta o usuário.
+        // Não faz logout: basta atualizar a página para renovar a sessão.
+        set({ sessionExpiredMessage: 'Sua conexão expirou. Atualize a página para continuar.' });
+        return false;
+      },
 
       checkConnectionOrLogout: async () => {
         if (!isSupabaseConfigured) return true; // dev/CI sem .env — sempre ok
