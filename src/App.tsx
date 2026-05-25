@@ -148,52 +148,86 @@ export default function App() {
     return () => window.removeEventListener('online', onOnline);
   }, []);
 
-  // Supabase Realtime: propaga mudanças em tempo real para todos os browsers
+  // Supabase Realtime: propaga mudanças em tempo real para todos os browsers.
   // Requer: no painel Supabase → Database → Replication → adicionar
   // match_results, bets e phase_settings à publication `supabase_realtime`.
+  //
+  // Estratégia de reconexão automática:
+  //   - Canal cai (CHANNEL_ERROR / TIMED_OUT / CLOSED)
+  //       → sync manual imediato para não perder dados
+  //       → reconexão agendada em 5 s
+  //   - Reconexão usa Date.now() no nome para nunca reutilizar objeto corrompido
+  //   - Guards `mounted` + `reconnectTimer` evitam reconexões paralelas
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
 
-    // Nome único por usuário: evita que supabase.channel() retorne um objeto
-    // corrompido de uma sessão anterior com o mesmo nome fixo (ghost channel).
-    // O cleanup do removeChannel pode não completar antes do próximo channel()
-    // em ciclos rápidos de logout/login — nome único elimina esse risco.
-    const channelName = `bolao-${profile.id}`;
+    let mounted       = true;
+    let activeChannel: ReturnType<typeof supabase.channel> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const channel = supabase
-      .channel(channelName)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'match_results' },
-        () => { syncFromSupabase(); }
-      )
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'bets' },
-        () => { fetchAllBets(); }
-      )
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'phase_settings' },
-        () => { syncPhaseSettings(); }
-      )
-      .subscribe((status: string, err?: Error) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('[realtime] canal conectado:', channelName);
-        } else if (
-          status === 'CHANNEL_ERROR' ||
-          status === 'TIMED_OUT'     ||
-          status === 'CLOSED'
-        ) {
-          // Canal caiu silenciosamente (JWT expirado no WS, queda de rede etc.).
-          // Sem este callback, o app nunca saberia — eventos param de chegar e
-          // o usuário vê dados desatualizados sem nenhuma indicação.
-          // Fallback: sync manual imediato para não perder atualizações.
-          console.warn('[realtime] canal perdido —', status, err?.message ?? '');
-          syncFromSupabase();
-          fetchAllBets();
-          syncPhaseSettings();
-        }
-      });
+    const connect = () => {
+      if (!mounted) return;
 
-    return () => { supabase.removeChannel(channel); };
+      // Timestamp no nome: cada tentativa cria um canal novo, elimina ghost channels
+      // acumulados de ciclos rápidos de logout/login ou reconexão.
+      const channelName = `bolao-${profile.id}-${Date.now()}`;
+
+      const ch = supabase
+        .channel(channelName)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'match_results' },
+          () => { syncFromSupabase(); }
+        )
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'bets' },
+          () => { fetchAllBets(); }
+        )
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'phase_settings' },
+          () => { syncPhaseSettings(); }
+        )
+        .subscribe((status: string, err?: Error) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('[realtime] canal conectado:', channelName);
+          } else if (
+            status === 'CHANNEL_ERROR' ||
+            status === 'TIMED_OUT'     ||
+            status === 'CLOSED'
+          ) {
+            // Canal caiu (JWT expirado no WS, queda de rede, timeout do free tier etc.)
+            console.warn('[realtime] canal perdido —', status, err?.message ?? '');
+
+            // 1. Sync manual: recupera eventos que chegaram com o canal fechado
+            syncFromSupabase();
+            fetchAllBets();
+            syncPhaseSettings();
+
+            // 2. Reconexão automática após 5 s.
+            // `!reconnectTimer` evita agendar múltiplos timers se o status
+            // disparar em sequência (ex: TIMED_OUT seguido de CLOSED).
+            if (mounted && !reconnectTimer) {
+              reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                if (activeChannel) {
+                  supabase.removeChannel(activeChannel);
+                  activeChannel = null;
+                }
+                connect();
+              }, 5000);
+            }
+          }
+        });
+
+      activeChannel = ch;
+    };
+
+    connect();
+
+    return () => {
+      mounted = false;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (activeChannel) { supabase.removeChannel(activeChannel); activeChannel = null; }
+    };
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mostra splash apenas se não há profile cacheado no localStorage.
