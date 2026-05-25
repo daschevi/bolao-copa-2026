@@ -9,19 +9,39 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey) : (null as any);
 
 /**
- * Wrapper que adiciona timeout a qualquer query do Supabase.
- * Evita travamento infinito quando o PostgREST está lento ou com conexões presas.
+ * Wrapper que adiciona timeout a qualquer query do Supabase e renova o JWT
+ * automaticamente se a primeira tentativa retornar "JWT expired".
+ *
+ * Recebe um **factory** (não a query construída) porque uma `PromiseLike` já
+ * iniciada não pode ser re-executada — precisamos construir uma nova query
+ * para a re-tentativa após o refresh.
+ *
+ * Uso:  sq(() => supabase.from('bets').select('*'), 8000)
  */
 export async function sq(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  queryBuilder: PromiseLike<{ data: any; error: any }>,
+  builder: () => PromiseLike<{ data: any; error: any }>,
   timeoutMs = 6000
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<{ data: any; error: { message: string } | null }> {
-  const timeoutPromise = new Promise<{ data: null; error: { message: string } }>(resolve =>
-    setTimeout(() => resolve({ data: null, error: { message: 'Tempo limite excedido. Verifique sua conexão.' } }), timeoutMs)
-  );
-  return Promise.race([queryBuilder as Promise<{ data: any; error: { message: string } | null }>, timeoutPromise]); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const exec = () => Promise.race([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    builder() as Promise<{ data: any; error: { message: string } | null }>,
+    new Promise<{ data: null; error: { message: string } }>(r =>
+      setTimeout(() => r({ data: null, error: { message: 'Tempo limite excedido. Verifique sua conexão.' } }), timeoutMs)
+    ),
+  ]);
+
+  const first = await exec();
+  if (first.error && isJwtExpiredError(first.error.message)) {
+    // Sessão pode ter expirado em background (mobile > 1h). Renova e re-tenta uma vez.
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      console.log('[sq] JWT renovado — re-tentando query');
+      return exec();
+    }
+  }
+  return first;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -67,6 +67,8 @@ create policy "results_insert" on public.match_results for insert
   with check (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
 create policy "results_update" on public.match_results for update
   using (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
+create policy "results_delete" on public.match_results for delete
+  using (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
 
 -- Phase settings: anyone can read, only admins can write
 create policy "phase_settings_select" on public.phase_settings for select using (true);

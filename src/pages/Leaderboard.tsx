@@ -54,7 +54,7 @@ export function Leaderboard() {
       const [, profilesResult] = await Promise.all([
         fetchAllBets(),
         isSupabaseConfigured
-          ? sq(supabase.from('profiles').select('*'), 8000)
+          ? sq(() => supabase.from('profiles').select('*'), 8000)
           : Promise.resolve({ data: null }),
       ]);
 

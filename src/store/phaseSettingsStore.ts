@@ -76,7 +76,7 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
         }));
 
         const { error } = await sq(
-          supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }),
+          () => supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }),
           12000
         );
 
@@ -93,7 +93,7 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
         for (let attempt = 1; attempt <= 3; attempt++) {
           const timeoutMs = attempt === 1 ? 8000 : 14000;
           const { data, error } = await sq(
-            supabase.from('phase_settings').select('*'),
+            () => supabase.from('phase_settings').select('*'),
             timeoutMs
           );
 

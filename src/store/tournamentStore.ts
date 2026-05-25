@@ -8,10 +8,10 @@ import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
 interface TournamentState {
   matches: Record<string, Match>;
   setResult: (matchId: string, homeScore: number, awayScore: number, homePenalties?: number | null, awayPenalties?: number | null, onError?: (msg: string) => void) => { error: string | null };
-  setKnockoutTeams: (matchId: string, homeTeamId: string | null, awayTeamId: string | null) => void;
+  setKnockoutTeams: (matchId: string, homeTeamId: string | null, awayTeamId: string | null, onError?: (msg: string) => void) => void;
   getGroupStandings: (group: string) => GroupStanding[];
   getAllThirdPlace: () => (GroupStanding & { group: string })[];
-  resetMatch: (matchId: string) => void;
+  resetMatch: (matchId: string, onError?: (msg: string) => void) => void;
   syncFromSupabase: () => Promise<void>;
   autoPopulateKnockout: () => void;
 }
@@ -160,7 +160,7 @@ export const useTournamentStore = create<TournamentState>()(
         return { error: null };
       },
 
-      setKnockoutTeams: (matchId, homeTeamId, awayTeamId) => {
+      setKnockoutTeams: (matchId, homeTeamId, awayTeamId, onError) => {
         set(state => ({
           matches: {
             ...state.matches,
@@ -170,21 +170,24 @@ export const useTournamentStore = create<TournamentState>()(
 
         // Persiste os times no Supabase para sincronizar entre devices
         if (isSupabaseConfigured) {
-          persistOp({
-            kind: 'upsert',
-            table: 'match_results',
-            payload: {
-              match_id:     matchId,
-              home_team_id: homeTeamId ?? null,
-              away_team_id: awayTeamId ?? null,
+          persistOp(
+            {
+              kind: 'upsert',
+              table: 'match_results',
+              payload: {
+                match_id:     matchId,
+                home_team_id: homeTeamId ?? null,
+                away_team_id: awayTeamId ?? null,
+              },
+              onConflict: 'match_id',
+              label: `setKnockoutTeams:${matchId}`,
             },
-            onConflict: 'match_id',
-            label: `setKnockoutTeams:${matchId}`,
-          });
+            { onError }
+          );
         }
       },
 
-      resetMatch: (matchId) => {
+      resetMatch: (matchId, onError) => {
         // Reseta localmente (síncrono — UI responde na hora)
         set(state => ({
           matches: {
@@ -205,12 +208,15 @@ export const useTournamentStore = create<TournamentState>()(
 
         // Remove do Supabase em background
         if (isSupabaseConfigured) {
-          persistOp({
-            kind: 'delete',
-            table: 'match_results',
-            match: { column: 'match_id', value: matchId },
-            label: `resetMatch:${matchId}`,
-          });
+          persistOp(
+            {
+              kind: 'delete',
+              table: 'match_results',
+              match: { column: 'match_id', value: matchId },
+              label: `resetMatch:${matchId}`,
+            },
+            { onError }
+          );
         }
       },
 
@@ -347,7 +353,7 @@ export const useTournamentStore = create<TournamentState>()(
         // Retry até 3× com backoff — necessário quando o Supabase (free tier) acorda do sleep
         for (let attempt = 1; attempt <= 3; attempt++) {
           const timeoutMs = attempt === 1 ? 8000 : 14000; // mais fôlego nas retentativas
-          const { data, error } = await sq(supabase.from('match_results').select('*'), timeoutMs);
+          const { data, error } = await sq(() => supabase.from('match_results').select('*'), timeoutMs);
 
           if (error) {
             console.warn(`[tournamentStore] syncFromSupabase tentativa ${attempt}/3:`, error.message);

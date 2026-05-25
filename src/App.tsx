@@ -91,7 +91,8 @@ export default function App() {
   }, []);
 
   // Supabase Realtime: propaga mudanças em tempo real para todos os browsers
-  // Requer: no painel Supabase → Database → Replication → adicionar match_results e bets
+  // Requer: no painel Supabase → Database → Replication → adicionar
+  // match_results, bets e phase_settings à publication `supabase_realtime`.
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
 
@@ -104,6 +105,10 @@ export default function App() {
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'bets' },
         () => { fetchAllBets(); }
+      )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'phase_settings' },
+        () => { syncPhaseSettings(); }
       )
       .subscribe();
 
