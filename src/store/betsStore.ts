@@ -122,11 +122,11 @@ export const useBetsStore = create<BetsState>()(
 
           // Captura bets locais antes do merge (para reconciliação)
           const localBets = get().bets;
+          const currentUserId = useAuthStore.getState().profile?.id;
 
           // Merge: banco sobrescreve chaves conhecidas EXCETO quando há uma
           // escrita local ainda pendente (pendingPersist=true). Bets locais
-          // ausentes no banco também são preservadas — podem ser saves cuja
-          // persistência ainda não confirmou.
+          // ausentes no banco também são preservadas se pendentes.
           set(state => {
             const merged: Record<string, Bet> = { ...state.bets };
             Object.entries(dbBets).forEach(([key, dbBet]) => {
@@ -143,16 +143,28 @@ export const useBetsStore = create<BetsState>()(
               }
               merged[key] = dbBet;
             });
+
+            // Remove bets locais ausentes no BD que não estão pendentes de sync.
+            // BD é fonte da verdade para dados confirmados — se uma bet foi
+            // deletada externamente (ex: admin limpou a tabela), ela deve
+            // desaparecer do estado local. Preservamos apenas bets com
+            // pendingPersist=true (escrita ainda em voo, não confirmada pelo BD).
+            Object.keys(merged).forEach(key => {
+              if (!dbBets[key] && !merged[key].pendingPersist) {
+                delete merged[key];
+              }
+            });
+
             return { bets: merged };
           });
 
-          // Reconciliação: re-envia ao banco qualquer bet local que não está no
-          // BD. Filtra pelo usuário atual para não tentar salvar bets de outro
-          // usuário (que levaria RLS-block em PCs compartilhados sem logout).
-          const currentUserId = useAuthStore.getState().profile?.id;
+          // Reconciliação: re-envia ao banco bets locais do usuário atual que
+          // ainda estão pendentes (pendingPersist=true) e não chegaram ao BD.
+          // Filtra por pendingPersist para não re-enviar bets que foram
+          // deletados externamente — esses já foram removidos do merged acima.
           Object.entries(localBets).forEach(([key, bet]) => {
             if (bet.userId !== currentUserId) return; // ignora bets de outro usuário
-            if (!dbBets[key] && bet.userId && bet.matchId) {
+            if (!dbBets[key] && bet.pendingPersist && bet.userId && bet.matchId) {
               console.log(`[betsStore] reconciliando bet pendente: ${key}`);
               persistOp({
                 kind: 'upsert',

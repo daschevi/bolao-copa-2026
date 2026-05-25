@@ -382,3 +382,22 @@ export async function drainOutbox(): Promise<void> {
 export function getOutboxSize(): number {
   return readOutbox().length;
 }
+
+/**
+ * Verifica se há uma op pendente na outbox para um match_id específico.
+ *
+ * Usado por syncFromSupabase para distinguir dois cenários ao encontrar
+ * uma partida com resultado local mas ausente no BD:
+ *   - true  → escrita ainda em voo (outbox pendente) → preserva local
+ *   - false → resultado foi deletado externamente no BD → zera local
+ */
+export function hasPendingOutboxOpForMatch(matchId: string): boolean {
+  return readOutbox().some(op => {
+    if (op.table !== 'match_results') return false;
+    if (op.kind === 'upsert') return op.payload.match_id === matchId;
+    if (op.kind === 'delete') {
+      return op.match.column === 'match_id' && op.match.value === matchId;
+    }
+    return false;
+  });
+}

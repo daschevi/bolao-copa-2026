@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { ALL_MATCHES } from '../data/matches';
 import { getGroupTeams, GROUPS } from '../data/teams';
 import type { Match, GroupStanding } from '../types';
-import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, sq, persistOp, hasPendingOutboxOpForMatch } from '../lib/supabase';
 
 interface TournamentState {
   matches: Record<string, Match>;
@@ -402,15 +402,32 @@ export const useTournamentStore = create<TournamentState>()(
               updated[matchId] = { ...updated[matchId], ...patch };
             });
 
-            // NOTA: NÃO zeramos mais partidas com base em ausência no BD.
-            // "Ausente no BD" pode significar "ainda não sincronizado" — não
-            // "deletado". Zerar nesse caso causava perda de placares recém
-            // marcados pelo admin (escrita ainda em retry na outbox quando o
-            // sync rodava). Para resetar cross-device, o admin pode marcar um
-            // placar novo (que sobrescreve via realtime) ou limpar o cache
-            // manualmente em cada device. O custo: `resetMatch` no celular A
-            // não zera mais o celular B via sync — mas a UX é muito menos
-            // arriscada do que perda silenciosa de placares.
+            // 2. Zera resultados locais ausentes no BD sem op pendente na outbox.
+            //
+            // Distingue dois cenários para match com resultado local mas sem
+            // linha no BD:
+            //   • hasPendingOutboxOpForMatch = true  → escrita ainda em voo
+            //     (admin acabou de lançar, retry em andamento) → preserva local
+            //   • hasPendingOutboxOpForMatch = false → resultado foi deletado
+            //     diretamente no BD (ex: admin limpou) → zera local
+            //
+            // Antes zerávamos via "ausência no BD" sem essa verificação, o que
+            // causava perda de placares recém marcados quando o sync rodava
+            // antes do retry da outbox completar. Agora o outbox é consultado
+            // como árbitro antes de zerar.
+            Object.keys(updated).forEach(matchId => {
+              const local = updated[matchId];
+              if (local.played && !dbMap.has(matchId) && !hasPendingOutboxOpForMatch(matchId)) {
+                updated[matchId] = {
+                  ...local,
+                  homeScore:     null,
+                  awayScore:     null,
+                  homePenalties: null,
+                  awayPenalties: null,
+                  played:        false,
+                };
+              }
+            });
 
             return { matches: updated };
           });
