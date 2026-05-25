@@ -69,8 +69,7 @@ function sanitizeScore(val: string): string {
 }
 
 export function MatchCard({ match, showBet = true }: Props) {
-  const profile                 = useAuthStore(s => s.profile);
-  const checkConnectionOrLogout = useAuthStore(s => s.checkConnectionOrLogout);
+  const profile     = useAuthStore(s => s.profile);
   const { getBet, saveBet } = useBetsStore();
   const { setResult, resetMatch } = useTournamentStore();
   const phaseConfig = usePhaseSettingsStore(s => s.phases[match.stage as StageKey]);
@@ -103,16 +102,14 @@ export function MatchCard({ match, showBet = true }: Props) {
     ? `Grupo ${match.group} · Rodada ${match.matchDay}`
     : STAGE_LABEL[match.stage] ?? match.stage;
 
-  const handleSaveBet = async () => {
+  const handleSaveBet = () => {
     if (!profile || !canBet) return;
-    // Verifica sessão antes de salvar — se o refresh token expirou, faz logout
-    // + exibe toast e fecha o modal (o App redireciona para /login em seguida).
-    const sessionOk = await checkConnectionOrLogout();
-    if (!sessionOk) { setOpen(false); return; }
     const home = betHome === '' ? 0 : Number(betHome);
     const away = betAway === '' ? 0 : Number(betAway);
-    // Fecha o modal IMEDIATAMENTE — o save local é síncrono dentro de saveBet()
-    // O Supabase persiste em background sem travar a UI
+    // Fecha o modal IMEDIATAMENTE — o save local é síncrono dentro de saveBet().
+    // O Supabase persiste em background via outbox (com retry de JWT automático)
+    // sem bloquear a UI. A verificação de sessão com network call fica apenas
+    // no visibilitychange, não no hot path de cada clique.
     setOpen(false);
     saveBet(profile.id, match.id, home, away);
   };
