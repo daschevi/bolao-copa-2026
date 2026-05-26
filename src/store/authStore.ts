@@ -187,7 +187,7 @@ export const useAuthStore = create<AuthState>()(
         });
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
-          async (_event: string, session: import('@supabase/supabase-js').Session | null) => {
+          async (event: string, session: import('@supabase/supabase-js').Session | null) => {
             if (!session?.user) {
               set({ profile: null, loading: false });
               return;
@@ -200,6 +200,15 @@ export const useAuthStore = create<AuthState>()(
                 loading: false,
                 error: `Acesso restrito a colaboradores @${ALLOWED_DOMAIN}`,
               });
+              return;
+            }
+
+            // TOKEN_REFRESHED: JWT renovado automaticamente — perfil já existe no store.
+            // Atualiza apenas sessionExpiresAt sem refazer a query ao banco.
+            // Sem esse atalho, fetchOrCreateProfile() bloquearia o update de sessionExpiresAt
+            // por até 15s no cold start do free tier, deixando o timestamp stale.
+            if (event === 'TOKEN_REFRESHED') {
+              set({ sessionExpiresAt: session.expires_at ?? null });
               return;
             }
 
