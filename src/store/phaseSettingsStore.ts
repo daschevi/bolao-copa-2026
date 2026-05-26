@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase, isSupabaseConfigured, sq } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, sq, markServerActive } from '../lib/supabase';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -75,35 +75,60 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
           updated_at:    new Date().toISOString(),
         }));
 
-        // Retry até 3× com backoff — cobre cold start do Supabase free tier
-        // (free tier dorme após inatividade; o 1º request pode levar >12s para acordar).
+        // Retry até 3× com backoff — cobre cold start do Supabase free tier.
+        // Usa Promise.race direto (não sq()) para capturar o objeto de erro completo
+        // do Supabase (message + code + details + hint) e facilitar diagnóstico de
+        // RLS, tabela inexistente ou outros problemas de banco.
         let lastError: string | null = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
-          // Timeouts progressivos: 1ª tentativa generosa para cobrir cold start
-          const timeoutMs = attempt === 1 ? 20000 : 30000;
-          const { error } = await sq(
-            () => supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }),
-            timeoutMs
-          );
+          // 10s na 1ª tentativa: erros de RLS/tabela voltam imediatamente.
+          // 20s na 2ª/3ª: cobre cold start do free tier.
+          const timeoutMs = attempt === 1 ? 10000 : 20000;
+          try {
+            type SupaErr = { message: string; code?: string; details?: string; hint?: string };
+            const result = await Promise.race([
+              supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }) as
+                Promise<{ data: unknown; error: SupaErr | null }>,
+              new Promise<{ data: null; error: SupaErr }>(r =>
+                setTimeout(() => r({ data: null, error: { message: 'Tempo limite excedido. Verifique sua conexão.', code: 'TIMEOUT' } }), timeoutMs)
+              ),
+            ]);
 
-          if (!error) return { error: null };
+            if (!result.error) {
+              markServerActive();
+              return { error: null };
+            }
 
-          lastError = error.message;
-          console.warn(`[phaseSettings] savePhaseSettings tentativa ${attempt}/3:`, lastError);
+            const err = result.error;
+            lastError = err.message;
+            console.error(`[phaseSettings] savePhaseSettings tentativa ${attempt}/3:`, {
+              message: err.message,
+              code:    err.code,
+              details: err.details,
+              hint:    err.hint,
+            });
 
-          // Erro permanente: re-tentar não vai resolver — aborta já
-          const lc = lastError.toLowerCase();
-          if (
-            /row-level security/.test(lc)  ||
-            /relation .* does not exist/.test(lc) ||
-            /column .* does not exist/.test(lc) ||
-            /pgrst204/.test(lc)
-          ) break;
+            // Erros permanentes — re-tentar não vai resolver
+            const lc = lastError.toLowerCase();
+            if (
+              /row-level security|permission denied/.test(lc) ||
+              /relation .* does not exist/.test(lc) ||
+              /column .* does not exist/.test(lc) ||
+              /pgrst204/.test(lc) ||
+              err.code === '42501' || // permission denied (PostgreSQL)
+              err.code === '42P01'    // undefined table (PostgreSQL)
+            ) break;
+
+          } catch (e) {
+            lastError = e instanceof Error ? e.message : String(e);
+            console.error(`[phaseSettings] savePhaseSettings exceção na tentativa ${attempt}/3:`, e);
+            break; // exceção inesperada — não re-tenta
+          }
 
           if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
         }
 
-        console.error('[phaseSettings] savePhaseSettings falhou após 3 tentativas:', lastError);
+        console.error('[phaseSettings] savePhaseSettings falhou:', lastError);
         return { error: lastError ?? 'Erro desconhecido ao salvar.' };
       },
 

@@ -75,19 +75,19 @@ export const useBetsStore = create<BetsState>()(
       getUserPoints: (userId) => {
         const userBets = get().getUserBets(userId);
         const matches = useTournamentStore.getState().matches;
-        let total = 0, exact = 0, correct = 0, totalBets = 0;
+        let total = 0, exact = 0, correct = 0;
         userBets.forEach(b => {
           const m = matches[b.matchId];
-          // Jogos sem resultado lançado não contam para nenhuma estatística
-          // (pontos, exatos, acertos ou contagem de palpites).
+          // Pontos/exatos/acertos só calculados quando o resultado foi lançado.
           if (!m?.played) return;
-          totalBets++;
           const pts = calcPoints(b, m);
           total += pts;
           if (pts === 3) exact++;
           if (pts >= 1) correct++;
         });
-        return { total, exact, correct, totalBets };
+        // totalBets = todos os palpites feitos, independente de o jogo ter
+        // sido disputado — aparece na classificação assim que o palpite é salvo.
+        return { total, exact, correct, totalBets: userBets.length };
       },
 
       fetchAllBets: async () => {

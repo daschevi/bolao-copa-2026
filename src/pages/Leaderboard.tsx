@@ -182,9 +182,6 @@ export function Leaderboard() {
                   </div>
                   <div className="min-w-0">
                     <div className="font-semibold text-white flex items-center gap-1 text-sm flex-wrap">
-                      {e.profile.isAdmin && (
-                        <span className="text-copa-green text-xs">★</span>
-                      )}
                       <span className="truncate">{e.profile.username}</span>
                       {isMe && (
                         <span
