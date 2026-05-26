@@ -49,9 +49,12 @@ export async function sq(
     const refreshed = await tryRefreshToken();
     if (refreshed) {
       console.log('[sq] JWT renovado — re-tentando query');
-      return exec();
+      const retry = await exec();
+      if (!retry.error) markServerActive();
+      return retry;
     }
   }
+  if (!first.error) markServerActive();
   return first;
 }
 
@@ -183,10 +186,15 @@ function bumpAttempts(id: string): void {
 
 async function executeOp(op: OutboxOp): Promise<{ error: { message: string } | null }> {
   if (!isSupabaseConfigured) return { error: { message: 'supabase não configurado' } };
-  if (op.kind === 'upsert') {
-    return supabase.from(op.table).upsert(op.payload, { onConflict: op.onConflict });
-  }
-  return supabase.from(op.table).delete().eq(op.match.column, op.match.value);
+  // Garante servidor acordado. Throttled em 60s — se outra op acabou de subir,
+  // o servidor está quente e isso retorna instantâneo. Se faz tempo, faz
+  // wake-up de até 8s antes do upsert/delete pra não cair no cold start.
+  await ensureServerWarm();
+  const result = op.kind === 'upsert'
+    ? await supabase.from(op.table).upsert(op.payload, { onConflict: op.onConflict })
+    : await supabase.from(op.table).delete().eq(op.match.column, op.match.value);
+  if (!result.error) markServerActive();
+  return result;
 }
 
 /** Retorna true se a mensagem de erro indica JWT expirado. */
@@ -222,6 +230,17 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
+// Timestamp da última atividade conhecida no servidor Supabase.
+// Usado por ensureServerWarm() para evitar wake-ups redundantes em rápida
+// sucessão (ex: drainOutbox com 5 ops faria 5 wake-ups sem isso).
+let lastServerActivityAt = 0;
+const SERVER_WARM_WINDOW_MS = 60_000; // 60s — janela em que assumimos servidor ainda quente
+
+/** Marca o servidor como ativo agora — chamar após qualquer resposta bem-sucedida. */
+export function markServerActive(): void {
+  lastServerActivityAt = Date.now();
+}
+
 /**
  * Acorda o Supabase fazendo uma query trivial e curta.
  *
@@ -230,9 +249,9 @@ async function tryRefreshToken(): Promise<boolean> {
  * redes corporativas hostis (firewall Golfleet) pode passar de 30s. Resultado:
  * o saveBet do usuário sempre cai no cold start e estoura timeout.
  *
- * Solução: chamamos esta função a cada 4 min (no keepalive) e antes de cada
- * drainOutbox. O servidor nunca chega a hibernar e a chamada real do usuário
- * sempre responde em < 1s.
+ * Solução: chamamos esta função a cada 4 min (no keepalive), no boot, no
+ * visibilitychange e antes de cada write na outbox. O servidor nunca chega
+ * a hibernar e a chamada real do usuário sempre responde em < 1s.
  *
  * Implementação: select id from profiles limit 1 — query trivial, batida pelo
  * RLS mesmo se o user não tiver permissão (o erro é OK, o objetivo é só fazer
@@ -248,9 +267,23 @@ export async function wakeUpSupabase(): Promise<void> {
       supabase.from('profiles').select('id').limit(1),
       new Promise(r => setTimeout(r, 8000)),
     ]);
+    markServerActive();
   } catch {
     // ignora — objetivo é só fazer o servidor responder, não usar a resposta
   }
+}
+
+/**
+ * Throttled wake-up: chama wakeUpSupabase() só se o servidor não teve
+ * atividade conhecida nos últimos 60s. Use antes de qualquer operação
+ * onde latência extra é aceitável se o servidor estiver dormindo.
+ *
+ * - Servidor recém-usado (< 60s): retorna instantaneamente (zero rede)
+ * - Servidor possivelmente dormindo: faz wake-up de até 8s
+ */
+export async function ensureServerWarm(): Promise<void> {
+  if (Date.now() - lastServerActivityAt < SERVER_WARM_WINDOW_MS) return;
+  await wakeUpSupabase();
 }
 
 /**
