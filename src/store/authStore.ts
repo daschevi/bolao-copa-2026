@@ -39,6 +39,71 @@ async function claimSession(userId: string): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Realtime channel para revogação instantânea de sessão
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Quando outro dispositivo faz login, ele grava novo UUID em
+// profiles.active_session_token. Este canal escuta esse UPDATE filtrado pelo
+// id do próprio usuário — assim que o evento chega, o cliente é expulso em < 1s.
+//
+// Fallback: se o canal Realtime cair (firewall corporativo, sleep do free
+// tier), o polling em verifySessionOwnership() no keepalive (4 min) e
+// visibilitychange ainda detecta a mudança — só não é instantâneo.
+//
+// Estado em escopo de módulo (não em zustand) para sobreviver re-renders
+// e evitar criar múltiplos canais por mudança de state.
+
+let sessionRevocationChannel: ReturnType<typeof supabase.channel> | null = null;
+let sessionRevocationUserId: string | null = null;
+
+function subscribeToSessionRevocation(
+  userId: string,
+  onRevoked: () => Promise<void> | void,
+): void {
+  if (!isSupabaseConfigured) return;
+  // Idempotente: se já assinamos pra este userId, mantém o canal existente
+  if (sessionRevocationUserId === userId && sessionRevocationChannel) return;
+  unsubscribeFromSessionRevocation();
+
+  sessionRevocationUserId = userId;
+  sessionRevocationChannel = supabase
+    .channel(`session-revocation-${userId}`)
+    .on('postgres_changes',
+      {
+        event:  'UPDATE',
+        schema: 'public',
+        table:  'profiles',
+        filter: `id=eq.${userId}`,
+      },
+      (payload: { new?: { active_session_token?: string | null } }) => {
+        const newToken   = payload.new?.active_session_token;
+        const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
+        // Se newToken bate com local → este device é o dono novo (acabou de
+        // gravar). Se diferente → outro device assumiu → expulsa.
+        if (newToken && localToken && newToken !== localToken) {
+          console.warn('[session] revogação via realtime — outro device assumiu');
+          onRevoked();
+        }
+      },
+    )
+    .subscribe((status: string) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('[session-revocation] canal conectado');
+      }
+      // Falhas silenciosas — o polling cobre como fallback. Não fazemos
+      // reconnect explícito aqui pra não criar loop em redes hostis.
+    });
+}
+
+function unsubscribeFromSessionRevocation(): void {
+  if (sessionRevocationChannel) {
+    supabase.removeChannel(sessionRevocationChannel);
+    sessionRevocationChannel = null;
+    sessionRevocationUserId = null;
+  }
+}
+
 function isDomainAllowed(email: string | undefined): boolean {
   return !!email?.toLowerCase().endsWith(`@${ALLOWED_DOMAIN}`);
 }
@@ -224,6 +289,14 @@ export const useAuthStore = create<AuthState>()(
             session.user.email ?? '',
           );
           set({ profile, loading: false, error: null, sessionChecked: true, sessionExpiresAt: session.expires_at ?? null });
+
+          // Reconecta o canal de revogação após reload de página (sessão
+          // restaurada do localStorage — onAuthStateChange pode não disparar
+          // SIGNED_IN nesse fluxo dependendo da versão do Supabase JS).
+          subscribeToSessionRevocation(session.user.id, async () => {
+            await get().logout();
+            set({ sessionExpiredMessage: 'Sua sessão foi encerrada porque você entrou em outro dispositivo.' });
+          });
         }).catch(() => {
           clearTimeout(sessionTimeout);
           // Falha de rede ao verificar sessão — libera a tela mesmo assim
@@ -286,6 +359,14 @@ export const useAuthStore = create<AuthState>()(
             if (event === 'SIGNED_IN' && !localStorage.getItem(SESSION_TOKEN_KEY)) {
               await claimSession(session.user.id);
             }
+
+            // Subscribe (idempotente) ao canal Realtime de revogação. Se já
+            // estamos assinados pra este userId, vira no-op. Cobre SIGNED_IN
+            // após login fresh e TOKEN_REFRESHED após restauração de sessão.
+            subscribeToSessionRevocation(session.user.id, async () => {
+              await get().logout();
+              set({ sessionExpiredMessage: 'Sua sessão foi encerrada porque você entrou em outro dispositivo.' });
+            });
           }
         );
 
@@ -316,6 +397,11 @@ export const useAuthStore = create<AuthState>()(
         try {
           await Promise.race([drainOutbox(), new Promise(r => setTimeout(r, 3000))]);
         } catch { /* ignora */ }
+
+        // Encerra canal de revogação ANTES de signOut do Supabase. Se deixarmos
+        // o canal vivo, o auto-reconnect do Supabase tentaria reabrir em nome
+        // de um usuário que está deslogando.
+        unsubscribeFromSessionRevocation();
 
         set({ profile: null, loading: false, error: null, sessionExpiresAt: null });
         if (isSupabaseConfigured) {

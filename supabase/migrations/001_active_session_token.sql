@@ -21,3 +21,17 @@ ALTER TABLE public.profiles
 
 COMMENT ON COLUMN public.profiles.active_session_token IS
   'UUID gerado a cada login. Dispositivos com token local diferente são deslogados automaticamente.';
+
+-- Habilita postgres_changes em profiles para o canal Realtime que expulsa
+-- dispositivos instantaneamente quando outro login assume a sessão.
+-- Sem isso, o cliente continuaria funcionando via polling no keepalive (4 min)
+-- mas perderia a expulsão em tempo real.
+--
+-- Idempotente: o DO block ignora se a tabela já está na publication.
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
+EXCEPTION
+  WHEN duplicate_object THEN NULL; -- já adicionada, ok
+  WHEN undefined_object THEN NULL; -- publication não existe ainda, ok
+END $$;
