@@ -285,10 +285,19 @@ export const useAuthStore = create<AuthState>()(
         // não consegue interagir com o modal antes de o splash sair.
         if (sessionExpiresAt === null) return true;
         const nowSec = Date.now() / 1000;
-        if (nowSec > sessionExpiresAt - 30) {
-          // Sessão expirada ou a ponto de expirar — bloqueia a escrita e orienta.
-          // Não faz logout: basta atualizar a página para renovar a sessão.
-          set({ sessionExpiredMessage: 'Sua conexão expirou. Atualize a página para continuar.' });
+
+        // Só bloqueia se o JWT está expirado há mais de 5 minutos.
+        //
+        // Motivo do limiar generoso (+5 min, não -30s):
+        //   Ao voltar do background, visibilitychange dispara checkConnectionOrLogout()
+        //   que renova o token via rede (200 ms–2 s). Se o usuário clicar salvar nesse
+        //   intervalo curto com o JWT recém-expirado, um limiar de -30 s bloquearia a
+        //   ação incorretamente. Com +5 min:
+        //     - JWT válido ou expirado há pouco → retorna true (persistOp já trata
+        //       JWT expirado internamente via isJwtExpiredError + tryRefreshToken)
+        //     - JWT expirado há > 5 min → refresh token definitivamente morto → bloqueia
+        if (nowSec > sessionExpiresAt + 5 * 60) {
+          set({ sessionExpiredMessage: 'Sua sessão expirou. Faça login novamente para continuar.' });
           return false;
         }
         return true;

@@ -163,6 +163,20 @@ export default function App() {
     return () => window.removeEventListener('online', onOnline);
   }, []);
 
+  // Drena outbox no evento de foco da janela — cobertura extra para combinações
+  // browser/OS onde window.focus dispara sem visibilitychange (ex: clicar de volta
+  // numa aba que ficou visível mas sem foco).
+  //
+  // Intencional NÃO chamar checkConnectionOrLogout() aqui para evitar duplo-refresh
+  // com o handler de visibilitychange. O foco por si só não indica sessão expirada —
+  // apenas garante que ops pendentes na outbox sejam drenadas ao voltar ao app.
+  useEffect(() => {
+    if (!profile) return;
+    const onFocus = () => { drainOutbox(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [profile?.id]);
+
   // Supabase Realtime: propaga mudanças em tempo real para todos os browsers.
   // Requer: no painel Supabase → Database → Replication → adicionar
   // match_results, bets e phase_settings à publication `supabase_realtime`.
