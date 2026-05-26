@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useBetsStore } from '../store/betsStore';
-import { supabase, isSupabaseConfigured, sq } from '../lib/supabase';
+import { useTournamentStore } from '../store/tournamentStore';
+import { supabase, isSupabaseConfigured, sq, drainOutbox, ensureServerWarm } from '../lib/supabase';
 import type { Profile } from '../types/index';
 
 const PROFILES_CACHE = 'bolao-profiles-cache';
@@ -49,9 +50,10 @@ export function Leaderboard() {
   // Assina o objeto `bets` do store de forma reativa: qualquer atualização
   // (App.tsx via sessionChecked, Realtime, visibilitychange) causa re-render
   // automático e re-cálculo do leaderboard — sem precisar de botão manual.
-  const bets        = useBetsStore(s => s.bets);
-  const getLeaderboard = useBetsStore(s => s.getLeaderboard);
-  const fetchAllBets   = useBetsStore(s => s.fetchAllBets);
+  const bets            = useBetsStore(s => s.bets);
+  const getLeaderboard  = useBetsStore(s => s.getLeaderboard);
+  const fetchAllBets    = useBetsStore(s => s.fetchAllBets);
+  const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
 
   // Perfis carregados do servidor (fonte de verdade para a lista de participantes).
   // Lazy init com cache local para exibição imediata enquanto o fetch corre.
@@ -84,16 +86,26 @@ export function Leaderboard() {
     [bets, profiles, getLeaderboard],
   );
 
-  /** Busca dados frescos — bets em paralelo com profiles para máxima velocidade. */
+  /** Busca dados frescos — bets, matches e profiles em paralelo. */
   const refresh = useCallback(async (showFullLoader = false) => {
     if (!mountedRef.current) return;
     if (showFullLoader) setLoading(true);
     else setRefreshing(true);
 
     try {
+      // Acorda servidor se necessário (throttled: só pinga se > 60s inativo)
+      await ensureServerWarm();
+      if (!mountedRef.current) return;
+
+      // Drena outbox antes de buscar — garante que palpites pendentes subam
+      // ao banco antes de calcular a classificação, evitando discrepâncias.
+      await drainOutbox();
+      if (!mountedRef.current) return;
+
       const [profilesResult] = await Promise.allSettled([
         fetchProfiles(),
-        fetchAllBets(), // atualiza o store — entries recalcula via useMemo
+        fetchAllBets(),      // atualiza bets store — entries recalcula via useMemo
+        syncFromSupabase(),  // atualiza resultados de jogos
       ]);
 
       if (!mountedRef.current) return;
@@ -104,7 +116,7 @@ export function Leaderboard() {
     } finally {
       if (mountedRef.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [fetchAllBets]);
+  }, [fetchAllBets, syncFromSupabase]);
 
   useEffect(() => {
     mountedRef.current = true;

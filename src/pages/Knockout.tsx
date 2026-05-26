@@ -3,6 +3,7 @@ import { BracketMatch } from '../components/BracketMatch';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useAuthStore } from '../store/authStore';
 import { usePhaseSettingsStore, type StageKey } from '../store/phaseSettingsStore';
+import { usePageSync } from '../hooks/usePageSync';
 import { TEAMS_BY_ID, TEAMS } from '../data/teams';
 
 type KnockoutStage = 'r32' | 'r16' | 'qf' | 'sf' | 'third' | 'final';
@@ -17,6 +18,8 @@ const ALL_STAGES: { id: KnockoutStage; label: string }[] = [
 ];
 
 export function Knockout() {
+  usePageSync({ phases: true });
+
   // Seletores granulares: este componente só re-renderiza quando matches,
   // setKnockoutTeams, profile ou phases efetivamente mudam — não a cada `set`
   // arbitrário em qualquer um dos stores.

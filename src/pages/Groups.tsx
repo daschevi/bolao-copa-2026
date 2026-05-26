@@ -4,6 +4,7 @@ import { Flag } from '../components/Flag';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useAuthStore } from '../store/authStore';
 import { usePhaseSettingsStore } from '../store/phaseSettingsStore';
+import { usePageSync } from '../hooks/usePageSync';
 import { GROUPS, TEAMS_BY_ID } from '../data/teams';
 import type { Match } from '../types';
 
@@ -167,6 +168,8 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export function Groups() {
+  usePageSync();
+
   const { matches } = useTournamentStore();
   const { profile } = useAuthStore();
   const isAdmin = profile?.isAdmin ?? false;

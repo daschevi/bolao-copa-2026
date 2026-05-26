@@ -4,11 +4,13 @@ import {
   STAGE_KEYS, STAGE_DISPLAY,
   type StageKey, type PhaseConfig,
 } from '../store/phaseSettingsStore';
+import { useTournamentStore } from '../store/tournamentStore';
 
 interface Props { onClose: () => void }
 
 export function PhaseSettingsModal({ onClose }: Props) {
-  const { phases, updatePhase, savePhaseSettings } = usePhaseSettingsStore();
+  const { phases, updatePhase, savePhaseSettings, syncPhaseSettings } = usePhaseSettingsStore();
+  const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
 
   // Rascunho local — só aplica ao store ao clicar em "Salvar"
   const [draft, setDraft] = useState<Record<StageKey, PhaseConfig>>(
@@ -31,6 +33,9 @@ export function PhaseSettingsModal({ onClose }: Props) {
       setSaveError(error);
     } else {
       setSaved(true);
+      // Re-busca imediatamente após salvar para refletir nas outras páginas
+      // sem precisar de logout/login. Roda em background — não bloqueia o fechamento.
+      Promise.allSettled([syncPhaseSettings(), syncFromSupabase()]);
       setTimeout(onClose, 900);
     }
   };

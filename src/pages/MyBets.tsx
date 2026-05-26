@@ -2,11 +2,13 @@ import { useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useBetsStore } from '../store/betsStore';
 import { useTournamentStore } from '../store/tournamentStore';
+import { usePageSync } from '../hooks/usePageSync';
 import { TEAMS_BY_ID } from '../data/teams';
 import { Flag } from '../components/Flag';
 import { calcPoints } from '../types';
 
 export function MyBets() {
+  usePageSync();
   const profile     = useAuthStore(s => s.profile);
   const getUserBets = useBetsStore(s => s.getUserBets);
   const matches     = useTournamentStore(s => s.matches);
