@@ -103,20 +103,20 @@ export function MatchCard({ match, showBet = true }: Props) {
     ? `Grupo ${match.group} · Rodada ${match.matchDay}`
     : STAGE_LABEL[match.stage] ?? match.stage;
 
-  const handleSaveBet = async () => {
+  const handleSaveBet = () => {
     if (!profile || !canBet) return;
-    // checkConnection() usa getSession() — lê do localStorage sem rede (<1ms).
-    // Se sessão ausente: exibe toast e aborta completamente (não salva nem local).
-    if (!(await checkConnection())) return;
+    // checkConnection() é 100% síncrono — compara Date.now() com sessionExpiresAt.
+    // Zero latência, zero mutex, nunca bloqueia a UI.
+    if (!checkConnection()) return;
     const home = betHome === '' ? 0 : Number(betHome);
     const away = betAway === '' ? 0 : Number(betAway);
     setOpen(false);
     saveBet(profile.id, match.id, home, away);
   };
 
-  const handleSaveResult = async () => {
+  const handleSaveResult = () => {
     if (!isAdmin) return;
-    if (!(await checkConnection())) return;
+    if (!checkConnection()) return;
     const h = resHome === '' ? 0 : Number(resHome);
     const a = resAway === '' ? 0 : Number(resAway);
     const needsPens = match.stage !== 'group' && h === a;

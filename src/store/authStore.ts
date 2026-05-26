@@ -74,22 +74,28 @@ interface AuthState {
    * NÃO persistida no localStorage — é estado transitório de UI.
    */
   sessionExpiredMessage: string | null;
+  /**
+   * Timestamp de expiração do JWT atual (em segundos, igual a session.expires_at).
+   * Atualizado por initAuth, onAuthStateChange e checkConnectionOrLogout.
+   * NÃO persistido — é estado de runtime recriado em cada carga de página.
+   */
+  sessionExpiresAt: number | null;
   initAuth: () => () => void;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
   clearSessionExpiredMessage: () => void;
   /**
-   * Verifica se existe sessão ativa no localStorage — SEM requisição de rede.
-   * ⚡ getSession() lê da memória/localStorage: resposta < 1ms, não trava UI.
+   * Verificação 100% síncrona — compara Date.now() com sessionExpiresAt.
+   * Zero latência, zero mutex, nunca bloqueia a UI.
    *
-   * - Sessão presente → retorna true (seguro prosseguir com a escrita)
-   * - Sessão ausente → seta toast "Sua conexão expirou..." e retorna false
+   * - Sessão válida  → retorna true  (seguro prosseguir com a escrita)
+   * - Sessão expirada → seta toast "Sua conexão expirou..." e retorna false
    *
    * Usar antes de qualquer operação de escrita (palpite, resultado).
    * Não faz logout — apenas bloqueia a ação e orienta o usuário a atualizar a página.
    */
-  checkConnection: () => Promise<boolean>;
+  checkConnection: () => boolean;
   /**
    * Verifica E renova o token via refreshSession() (com requisição de rede).
    * - Sucesso → atualiza JWT do WebSocket Realtime e retorna true
@@ -108,6 +114,7 @@ export const useAuthStore = create<AuthState>()(
       error: null,
       sessionChecked: false,
       sessionExpiredMessage: null,
+      sessionExpiresAt: null,
 
       initAuth: () => {
         if (!isSupabaseConfigured) {
@@ -172,7 +179,7 @@ export const useAuthStore = create<AuthState>()(
             session.user.user_metadata ?? {},
             session.user.email ?? '',
           );
-          set({ profile, loading: false, error: null, sessionChecked: true });
+          set({ profile, loading: false, error: null, sessionChecked: true, sessionExpiresAt: session.expires_at ?? null });
         }).catch(() => {
           clearTimeout(sessionTimeout);
           // Falha de rede ao verificar sessão — libera a tela mesmo assim
@@ -201,7 +208,7 @@ export const useAuthStore = create<AuthState>()(
               session.user.user_metadata ?? {},
               session.user.email ?? '',
             );
-            set({ profile, loading: false, error: null });
+            set({ profile, loading: false, error: null, sessionExpiresAt: session.expires_at ?? null });
           }
         );
 
@@ -233,7 +240,7 @@ export const useAuthStore = create<AuthState>()(
           await Promise.race([drainOutbox(), new Promise(r => setTimeout(r, 3000))]);
         } catch { /* ignora */ }
 
-        set({ profile: null, loading: false, error: null });
+        set({ profile: null, loading: false, error: null, sessionExpiresAt: null });
         if (isSupabaseConfigured) {
           try { await supabase.auth.signOut(); } catch { /* ignora */ }
         }
@@ -270,18 +277,21 @@ export const useAuthStore = create<AuthState>()(
 
       clearSessionExpiredMessage: () => set({ sessionExpiredMessage: null }),
 
-      checkConnection: async () => {
+      checkConnection: () => {
         if (!isSupabaseConfigured) return true; // dev/CI sem .env — sempre ok
-        try {
-          // getSession() lê da memória/localStorage sem requisição de rede.
-          // Resolução < 1ms: não trava a UI nem bloqueia o clique do usuário.
-          const { data, error } = await supabase.auth.getSession();
-          if (!error && data.session) return true;
-        } catch { /* fall through */ }
-        // Sessão ausente → bloqueia a escrita e orienta o usuário.
-        // Não faz logout: basta atualizar a página para renovar a sessão.
-        set({ sessionExpiredMessage: 'Sua conexão expirou. Atualize a página para continuar.' });
-        return false;
+        const { sessionExpiresAt } = get();
+        // sessionExpiresAt é null apenas na janela de startup (initAuth ainda em voo).
+        // Nesse intervalo aceitamos otimisticamente — a duração é < 1s e o usuário
+        // não consegue interagir com o modal antes de o splash sair.
+        if (sessionExpiresAt === null) return true;
+        const nowSec = Date.now() / 1000;
+        if (nowSec > sessionExpiresAt - 30) {
+          // Sessão expirada ou a ponto de expirar — bloqueia a escrita e orienta.
+          // Não faz logout: basta atualizar a página para renovar a sessão.
+          set({ sessionExpiredMessage: 'Sua conexão expirou. Atualize a página para continuar.' });
+          return false;
+        }
+        return true;
       },
 
       checkConnectionOrLogout: async () => {
@@ -293,6 +303,8 @@ export const useAuthStore = create<AuthState>()(
             // Propaga token renovado para o WebSocket do Realtime
             // (o auto-refresh HTTP não atualiza o WS automaticamente).
             supabase.realtime.setAuth(data.session.access_token);
+            // Atualiza timestamp para que checkConnection() continue síncrono e correto.
+            set({ sessionExpiresAt: data.session.expires_at ?? null });
             return true;
           }
         } catch { /* fall through */ }
