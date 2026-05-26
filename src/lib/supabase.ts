@@ -94,9 +94,11 @@ export type OutboxOpInput =
   | Omit<Extract<OutboxOp, { kind: 'delete' }>, 'id' | 'attempts' | 'createdAt'>;
 
 const OUTBOX_KEY  = 'bolao-outbox-v1';
-// 12 tentativas totais (era 8) — com timeouts maiores cada ciclo gasta mais
-// tempo, então damos mais fôlego antes de descartar definitivamente uma op.
-const MAX_ATTEMPTS = 12;
+// 20 tentativas totais. Cada drainOutbox/persistOp pode rodar várias vezes via
+// focus/visibilitychange/online/keepalive, então damos bastante fôlego antes
+// de descartar. Em redes corporativas hostis (firewall + free tier dormindo)
+// o palpite pode demorar vários minutos para subir — mas não pode ser perdido.
+const MAX_ATTEMPTS = 20;
 
 function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -221,6 +223,37 @@ async function tryRefreshToken(): Promise<boolean> {
 }
 
 /**
+ * Acorda o Supabase fazendo uma query trivial e curta.
+ *
+ * Motivação: free tier hiberna após ~5 min sem requisições HTTP. A primeira
+ * requisição após a hibernação leva 5-15s+ para acordar o servidor — em
+ * redes corporativas hostis (firewall Golfleet) pode passar de 30s. Resultado:
+ * o saveBet do usuário sempre cai no cold start e estoura timeout.
+ *
+ * Solução: chamamos esta função a cada 4 min (no keepalive) e antes de cada
+ * drainOutbox. O servidor nunca chega a hibernar e a chamada real do usuário
+ * sempre responde em < 1s.
+ *
+ * Implementação: select id from profiles limit 1 — query trivial, batida pelo
+ * RLS mesmo se o user não tiver permissão (o erro é OK, o objetivo é só fazer
+ * o servidor responder algo). Timeout curto: se demorou > 8s já tinha
+ * hibernado mesmo, vamos confiar que a 2ª chamada (após esta) aborda direto.
+ *
+ * É fire-and-forget — nunca lança, nunca bloqueia o caller.
+ */
+export async function wakeUpSupabase(): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  try {
+    await Promise.race([
+      supabase.from('profiles').select('id').limit(1),
+      new Promise(r => setTimeout(r, 8000)),
+    ]);
+  } catch {
+    // ignora — objetivo é só fazer o servidor responder, não usar a resposta
+  }
+}
+
+/**
  * Persiste uma operação no Supabase. Sempre passa pela outbox:
  *   1. Enfileira em localStorage (escrita é durável a partir desse ponto)
  *   2. Tenta executar com retry/backoff
@@ -235,10 +268,11 @@ export async function persistOp(
   {
     retries = 3,
     baseDelay = 2000,
-    // Default 20s para writes — Supabase free tier cold start leva 5-10s na
-    // primeira requisição após inatividade. Com 8s (anterior) a primeira
-    // tentativa sempre estourava e o palpite só subia na 2ª ou 3ª retentativa.
-    timeoutMs = 20000,
+    // Default 45s para writes — cobre cold start extremo do free tier em
+    // redes corporativas hostis (Golfleet) onde a 1ª chamada após hibernação
+    // pode passar de 30s. Combinado com wakeUpSupabase() no keepalive de 4 min,
+    // 45s é só rede de segurança — na prática a chamada sobe em < 1s.
+    timeoutMs = 45000,
     onError,
     onSuccess,
   }: {
@@ -322,6 +356,12 @@ export async function drainOutbox(): Promise<void> {
   // refreshSession() simultaneamente. Em vez disso, cada op trata erros de JWT
   // expirado individualmente (isJwtExpiredError → tryRefreshToken) e ops que
   // falham por falta de sessão ficam na outbox para o próximo drain.
+
+  // Acorda o servidor antes de drenar: se as ops ficaram pendentes durante
+  // hibernação do free tier, a 1ª op cairia no cold start (5-15s+) e estouraria
+  // timeout. Com wakeUp antes, o servidor já está respondendo quando as ops
+  // de verdade rodam — drain inteiro completa em < 2s na prática.
+  await wakeUpSupabase();
 
   _draining = true;
   console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);

@@ -11,7 +11,7 @@ import { useAuthStore } from './store/authStore';
 import { useTournamentStore } from './store/tournamentStore';
 import { useBetsStore } from './store/betsStore';
 import { usePhaseSettingsStore } from './store/phaseSettingsStore';
-import { supabase, isSupabaseConfigured, drainOutbox } from './lib/supabase';
+import { supabase, isSupabaseConfigured, drainOutbox, wakeUpSupabase } from './lib/supabase';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const profile = useAuthStore(s => s.profile);
@@ -177,23 +177,30 @@ export default function App() {
     return () => window.removeEventListener('focus', onFocus);
   }, [profile?.id]);
 
-  // Keepalive de sessão a cada 4 min — cobre o cenário de aba aberta e visível
-  // por longo período, onde visibilitychange/focus NUNCA disparam e o sessionExpiresAt
-  // pode ficar stale por algum motivo não diagnosticado. Renova proativamente o JWT
-  // (dispara TOKEN_REFRESHED → onAuthStateChange atualiza sessionExpiresAt).
+  // Keepalive a cada 4 min — DUAS responsabilidades:
   //
-  // 4 minutos é frequente para uma JWT de 1h, mas é defensivo enquanto investigamos
-  // o bug "modal trava após ~7 min" reportado mesmo com aba sempre visível.
+  // 1) wakeUpSupabase(): query trivial que mantém o free tier acordado.
+  //    Sem isso o servidor hiberna após ~5 min e a próxima requisição do
+  //    usuário (saveBet) cai num cold start de 5-30s. Com ping a cada 4 min
+  //    o servidor nunca dorme e o palpite sobe em < 1s.
+  //
+  // 2) refreshSession(): renova o JWT proativamente. Cobre o cenário de aba
+  //    aberta o tempo todo onde visibilitychange/focus nunca disparam.
+  //    Atualiza sessionExpiresAt via onAuthStateChange (TOKEN_REFRESHED).
+  //
+  // wakeUp roda PRIMEIRO porque refreshSession é uma chamada de auth (caminho
+  // diferente no servidor) e não acorda o PostgREST sozinho.
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
     const keepalive = setInterval(async () => {
+      await wakeUpSupabase();
       try {
         const { error } = await supabase.auth.refreshSession();
         if (error) {
           console.warn('[keepalive] refresh falhou:', error.message);
           checkConnectionOrLogout();
         } else {
-          console.log('[keepalive] sessão renovada');
+          console.log('[keepalive] servidor pingado + sessão renovada');
         }
       } catch (e) {
         console.warn('[keepalive] exceção:', e);
