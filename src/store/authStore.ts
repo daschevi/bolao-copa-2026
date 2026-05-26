@@ -188,6 +188,19 @@ export const useAuthStore = create<AuthState>()(
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
           async (event: string, session: import('@supabase/supabase-js').Session | null) => {
+            // ── LOGS DIAGNÓSTICOS — bug "modal trava após ~7 min" ───────────────
+            if (session?.expires_at !== undefined) {
+              const nowSec = Date.now() / 1000;
+              console.log('[AUTH] event:', event);
+              console.log('[AUTH] expires_at raw:', session.expires_at);
+              console.log('[AUTH] typeof:', typeof session.expires_at);
+              console.log('[AUTH] Date.now()/1000:', nowSec);
+              console.log('[AUTH] diff em segundos:', session.expires_at - nowSec);
+            } else {
+              console.log('[AUTH] event:', event, '— sem session/expires_at');
+            }
+            // ────────────────────────────────────────────────────────────────────
+
             if (!session?.user) {
               set({ profile: null, loading: false });
               return;
@@ -292,8 +305,20 @@ export const useAuthStore = create<AuthState>()(
         // sessionExpiresAt é null apenas na janela de startup (initAuth ainda em voo).
         // Nesse intervalo aceitamos otimisticamente — a duração é < 1s e o usuário
         // não consegue interagir com o modal antes de o splash sair.
-        if (sessionExpiresAt === null) return true;
+        if (sessionExpiresAt === null) {
+          console.log('[CHECK] sessionExpiresAt: null — janela de startup, retornando true');
+          return true;
+        }
         const nowSec = Date.now() / 1000;
+
+        // ── LOGS DIAGNÓSTICOS — bug "modal trava após ~7 min" ─────────────────
+        const blocking = nowSec > sessionExpiresAt + 300;
+        console.log('[CHECK] sessionExpiresAt:', sessionExpiresAt);
+        console.log('[CHECK] Date.now()/1000:', nowSec);
+        console.log('[CHECK] diff (expires_at - now):', sessionExpiresAt - nowSec, 'segundos');
+        console.log('[CHECK] threshold (expires_at + 300):', sessionExpiresAt + 300);
+        console.log('[CHECK] bloqueando?', blocking);
+        // ──────────────────────────────────────────────────────────────────────
 
         // Só bloqueia se o JWT está expirado há mais de 5 minutos.
         //
@@ -305,7 +330,7 @@ export const useAuthStore = create<AuthState>()(
         //     - JWT válido ou expirado há pouco → retorna true (persistOp já trata
         //       JWT expirado internamente via isJwtExpiredError + tryRefreshToken)
         //     - JWT expirado há > 5 min → refresh token definitivamente morto → bloqueia
-        if (nowSec > sessionExpiresAt + 5 * 60) {
+        if (blocking) {
           set({ sessionExpiredMessage: 'Reconectando… Tente salvar novamente em instantes.' });
           return false;
         }

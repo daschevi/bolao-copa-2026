@@ -177,6 +177,31 @@ export default function App() {
     return () => window.removeEventListener('focus', onFocus);
   }, [profile?.id]);
 
+  // Keepalive de sessão a cada 4 min — cobre o cenário de aba aberta e visível
+  // por longo período, onde visibilitychange/focus NUNCA disparam e o sessionExpiresAt
+  // pode ficar stale por algum motivo não diagnosticado. Renova proativamente o JWT
+  // (dispara TOKEN_REFRESHED → onAuthStateChange atualiza sessionExpiresAt).
+  //
+  // 4 minutos é frequente para uma JWT de 1h, mas é defensivo enquanto investigamos
+  // o bug "modal trava após ~7 min" reportado mesmo com aba sempre visível.
+  useEffect(() => {
+    if (!profile || !isSupabaseConfigured) return;
+    const keepalive = setInterval(async () => {
+      try {
+        const { error } = await supabase.auth.refreshSession();
+        if (error) {
+          console.warn('[keepalive] refresh falhou:', error.message);
+          checkConnectionOrLogout();
+        } else {
+          console.log('[keepalive] sessão renovada');
+        }
+      } catch (e) {
+        console.warn('[keepalive] exceção:', e);
+      }
+    }, 4 * 60 * 1000);
+    return () => clearInterval(keepalive);
+  }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Supabase Realtime: propaga mudanças em tempo real para todos os browsers.
   // Requer: no painel Supabase → Database → Replication → adicionar
   // match_results, bets e phase_settings à publication `supabase_realtime`.
