@@ -54,6 +54,7 @@ export default function App() {
   const sessionChecked           = useAuthStore(s => s.sessionChecked);
   const initAuth                 = useAuthStore(s => s.initAuth);
   const checkConnectionOrLogout  = useAuthStore(s => s.checkConnectionOrLogout);
+  const verifySessionOwnership   = useAuthStore(s => s.verifySessionOwnership);
   const sessionExpiredMessage    = useAuthStore(s => s.sessionExpiredMessage);
   const clearSessionMessage      = useAuthStore(s => s.clearSessionExpiredMessage);
   const syncFromSupabase         = useTournamentStore(s => s.syncFromSupabase);
@@ -156,6 +157,11 @@ export default function App() {
       //    pode ter hibernado mesmo com keepalive configurado.
       await wakeUpSupabase();
 
+      // 4b. Verifica sessão única — se outro device fez login enquanto este
+      //     estava em background, sai imediatamente sem sincronizar dados.
+      await verifySessionOwnership();
+      if (!useAuthStore.getState().profile) return; // logout aconteceu acima
+
       // 5. Drena outbox e re-sincroniza tudo
       await drainOutbox();
       await Promise.allSettled([
@@ -219,6 +225,9 @@ export default function App() {
       } catch (e) {
         console.warn('[keepalive] exceção:', e);
       }
+      // Verifica se outro dispositivo assumiu a sessão única.
+      // Se sim, faz logout automático com toast informativo.
+      verifySessionOwnership();
     }, 4 * 60 * 1000);
     return () => clearInterval(keepalive);
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps

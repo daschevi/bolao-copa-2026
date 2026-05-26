@@ -4,6 +4,40 @@ import { supabase, isSupabaseConfigured, drainOutbox } from '../lib/supabase';
 import type { Profile } from '../types';
 
 const ALLOWED_DOMAIN = 'golfleet.com.br';
+const SESSION_TOKEN_KEY = 'bolao-session-token';
+
+/**
+ * Gera UUID v4 — usa crypto.randomUUID() onde disponível (Chrome 92+, FF 95+,
+ * Safari 15.4+), com fallback manual para browsers antigos.
+ */
+function genSessionToken(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/**
+ * Reclama propriedade da sessão única: gera UUID novo, escreve em
+ * profiles.active_session_token e salva no localStorage. Chamado quando o
+ * usuário faz login (não em refresh de sessão).
+ *
+ * Se a escrita no BD falhar (rede), salvamos local mesmo assim — a próxima
+ * verificação vai detectar e tentar regravar. Sem isso, um login em rede
+ * ruim ficaria sem ID de sessão e o keepalive interpretaria como "outro
+ * device assumiu" deslogando o próprio usuário.
+ */
+async function claimSession(userId: string): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const token = genSessionToken();
+  localStorage.setItem(SESSION_TOKEN_KEY, token);
+  try {
+    await supabase.from('profiles').update({ active_session_token: token }).eq('id', userId);
+  } catch (e) {
+    console.warn('[session] falha ao gravar active_session_token (continua localmente):', e);
+  }
+}
 
 function isDomainAllowed(email: string | undefined): boolean {
   return !!email?.toLowerCase().endsWith(`@${ALLOWED_DOMAIN}`);
@@ -104,6 +138,16 @@ interface AuthState {
    * Usar apenas no visibilitychange — a latência de rede é aceitável ali.
    */
   checkConnectionOrLogout: () => Promise<boolean>;
+  /**
+   * Verifica se o token de sessão local ainda bate com o do BD.
+   * Se outro dispositivo fez login, o BD tem token diferente → este
+   * dispositivo faz logout e exibe toast "entrou em outro dispositivo".
+   *
+   * Chamado pelo keepalive de 4 min e por visibilitychange. Idempotente,
+   * silencioso quando tokens batem. Tolerante a falhas de rede: erro de
+   * leitura → não desloga (assume problema transitório).
+   */
+  verifySessionOwnership: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -231,6 +275,17 @@ export const useAuthStore = create<AuthState>()(
               session.user.email ?? '',
             );
             set({ profile, loading: false, error: null, sessionExpiresAt: session.expires_at ?? null });
+
+            // Sessão única por usuário: reclama token apenas em login NOVO,
+            // não em restauração de sessão de página (INITIAL_SESSION com
+            // localStorage já populado).
+            //   - SIGNED_IN sem token local → login fresh deste device
+            //   - SIGNED_IN com token local → recarregou aba, NÃO regenerar
+            //     (senão sobrescreveríamos o token de outro device que possa
+            //     ter feito login enquanto esta aba estava aberta)
+            if (event === 'SIGNED_IN' && !localStorage.getItem(SESSION_TOKEN_KEY)) {
+              await claimSession(session.user.id);
+            }
           }
         );
 
@@ -271,12 +326,15 @@ export const useAuthStore = create<AuthState>()(
         // e contamina o leaderboard até o fetchAllBets resolver.
         // Inclui a outbox: ops pendentes do usuário anterior seriam barradas
         // pelo RLS do próximo usuário e gerariam ruído nos logs.
+        // Inclui o session-token: senão o próximo login no mesmo browser
+        // reaproveitaria o token e o claimSession() seria pulado.
         [
           'bolao-auth',
           'bolao-bets',
           'bolao-tournament-v2',
           'bolao-phase-settings',
           'bolao-outbox-v1',
+          SESSION_TOKEN_KEY,
         ].forEach(k => localStorage.removeItem(k));
         // Reseta os stores em memória que dependem do usuário.
         // (tournamentStore é dado público — será reidratado pelo próximo sync)
@@ -358,6 +416,42 @@ export const useAuthStore = create<AuthState>()(
         await get().logout();
         set({ sessionExpiredMessage: 'Sua sessão expirou. Faça login novamente para continuar.' });
         return false;
+      },
+
+      verifySessionOwnership: async () => {
+        if (!isSupabaseConfigured) return;
+        const profile = get().profile;
+        if (!profile) return;
+        const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
+        if (!localToken) return; // ainda não reclamamos token — pula
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('active_session_token')
+            .eq('id', profile.id)
+            .single();
+          if (error) {
+            // Erro de leitura → não desloga, assume rede ruim
+            console.warn('[session] verify falhou (rede):', error.message);
+            return;
+          }
+          const remoteToken = data?.active_session_token;
+          // remoteToken null = banco ainda não tem (migração não rodou ou
+          // login pré-feature). Não desloga — apenas regrava.
+          if (remoteToken == null) {
+            await supabase.from('profiles')
+              .update({ active_session_token: localToken })
+              .eq('id', profile.id);
+            return;
+          }
+          if (remoteToken !== localToken) {
+            console.warn('[session] outro device assumiu — deslogando');
+            await get().logout();
+            set({ sessionExpiredMessage: 'Sua sessão foi encerrada porque você entrou em outro dispositivo.' });
+          }
+        } catch (e) {
+          console.warn('[session] verify exceção:', e);
+        }
       },
     }),
     { name: 'bolao-auth', partialize: (s) => ({ profile: s.profile }) }
