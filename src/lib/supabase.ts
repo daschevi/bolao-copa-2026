@@ -29,7 +29,10 @@ export const supabase = isSupabaseConfigured
 export async function sq(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   builder: () => PromiseLike<{ data: any; error: any }>,
-  timeoutMs = 6000
+  // Default 15s — Supabase free tier hiberna após ~5 min de ociosidade e o
+  // cold start da primeira requisição pode levar 5-10s. Antes era 6s e a
+  // primeira chamada após inatividade sempre estourava timeout.
+  timeoutMs = 15000
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<{ data: any; error: { message: string } | null }> {
   const exec = () => Promise.race([
@@ -91,7 +94,9 @@ export type OutboxOpInput =
   | Omit<Extract<OutboxOp, { kind: 'delete' }>, 'id' | 'attempts' | 'createdAt'>;
 
 const OUTBOX_KEY  = 'bolao-outbox-v1';
-const MAX_ATTEMPTS = 8;
+// 12 tentativas totais (era 8) — com timeouts maiores cada ciclo gasta mais
+// tempo, então damos mais fôlego antes de descartar definitivamente uma op.
+const MAX_ATTEMPTS = 12;
 
 function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -230,7 +235,10 @@ export async function persistOp(
   {
     retries = 3,
     baseDelay = 2000,
-    timeoutMs = 8000,
+    // Default 20s para writes — Supabase free tier cold start leva 5-10s na
+    // primeira requisição após inatividade. Com 8s (anterior) a primeira
+    // tentativa sempre estourava e o palpite só subia na 2ª ou 3ª retentativa.
+    timeoutMs = 20000,
     onError,
     onSuccess,
   }: {
@@ -331,7 +339,7 @@ export async function drainOutbox(): Promise<void> {
         const result = await Promise.race([
           executeOp(op),
           new Promise<{ error: { message: string } }>(r =>
-            setTimeout(() => r({ error: { message: 'timeout' } }), 10000)
+            setTimeout(() => r({ error: { message: 'timeout' } }), 25000)
           ),
         ]);
         if (!result.error) {
@@ -356,7 +364,7 @@ export async function drainOutbox(): Promise<void> {
             const retryResult = await Promise.race([
               executeOp(op),
               new Promise<{ error: { message: string } }>(r =>
-                setTimeout(() => r({ error: { message: 'timeout' } }), 10000)
+                setTimeout(() => r({ error: { message: 'timeout' } }), 25000)
               ),
             ]);
             if (!retryResult.error) {

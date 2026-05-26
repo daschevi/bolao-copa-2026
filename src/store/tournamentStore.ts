@@ -352,7 +352,8 @@ export const useTournamentStore = create<TournamentState>()(
 
         // Retry até 3× com backoff — necessário quando o Supabase (free tier) acorda do sleep
         for (let attempt = 1; attempt <= 3; attempt++) {
-          const timeoutMs = attempt === 1 ? 8000 : 14000; // mais fôlego nas retentativas
+          // 15s na 1ª tentativa, 25s nas retentativas — cobre cold start do free tier.
+          const timeoutMs = attempt === 1 ? 15000 : 25000;
           const { data, error } = await sq(() => supabase.from('match_results').select('*'), timeoutMs);
 
           if (error) {

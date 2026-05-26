@@ -95,7 +95,9 @@ export const useBetsStore = create<BetsState>()(
 
         // Retry até 3× com backoff — cobre cold start do Supabase free tier
         for (let attempt = 1; attempt <= 3; attempt++) {
-          const timeoutMs = attempt === 1 ? 8000 : 14000;
+          // 15s na 1ª tentativa, 25s nas retentativas — cobre cold start de
+          // 5-10s do Supabase free tier após período de inatividade.
+          const timeoutMs = attempt === 1 ? 15000 : 25000;
           const { data, error } = await sq(() => supabase.from('bets').select('*'), timeoutMs);
 
           if (error) {

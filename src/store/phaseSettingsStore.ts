@@ -79,8 +79,8 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
         // (free tier dorme após inatividade; o 1º request pode levar >12s para acordar).
         let lastError: string | null = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
-          // Timeouts progressivos: 1ª tentativa rápida, subsequentes mais generosas
-          const timeoutMs = attempt === 1 ? 12000 : 20000;
+          // Timeouts progressivos: 1ª tentativa generosa para cobrir cold start
+          const timeoutMs = attempt === 1 ? 20000 : 30000;
           const { error } = await sq(
             () => supabase.from('phase_settings').upsert(rows, { onConflict: 'stage' }),
             timeoutMs
@@ -111,7 +111,8 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
         if (!isSupabaseConfigured) return;
 
         for (let attempt = 1; attempt <= 3; attempt++) {
-          const timeoutMs = attempt === 1 ? 8000 : 14000;
+          // 15s na 1ª tentativa, 25s nas retentativas — cobre cold start do free tier.
+          const timeoutMs = attempt === 1 ? 15000 : 25000;
           const { data, error } = await sq(
             () => supabase.from('phase_settings').select('*'),
             timeoutMs

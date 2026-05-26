@@ -225,15 +225,25 @@ export function MatchCard({ match, showBet = true }: Props) {
           {showBet && !teamsReady && !isPlayed ? (
             <div className="text-xs" style={{ color: '#4B5563' }}>Times a definir</div>
           ) : showBet && userBet ? (
-            <div className={`text-sm font-bold px-2 py-1 rounded-lg inline-block ${
-              betPoints === 3 ? 'bg-green-900/40 text-green-400' :
-              betPoints === 1 ? 'bg-yellow-900/40 text-yellow-400' :
-              betPoints === 0 ? 'bg-red-900/40 text-red-400' :
-              'bg-copa-green/10 text-copa-green'
-            }`}>
-              Palpite: {userBet.homeScore} × {userBet.awayScore}
-              {betPoints !== null && <span className="ml-1 opacity-80">· +{betPoints} pt</span>}
-            </div>
+            <>
+              <div className={`text-sm font-bold px-2 py-1 rounded-lg inline-block ${
+                betPoints === 3 ? 'bg-green-900/40 text-green-400' :
+                betPoints === 1 ? 'bg-yellow-900/40 text-yellow-400' :
+                betPoints === 0 ? 'bg-red-900/40 text-red-400' :
+                'bg-copa-green/10 text-copa-green'
+              }`}>
+                Palpite: {userBet.homeScore} × {userBet.awayScore}
+                {betPoints !== null && <span className="ml-1 opacity-80">· +{betPoints} pt</span>}
+              </div>
+              {/* Indicador de sync pendente: palpite está salvo localmente
+                  mas ainda não confirmado pelo servidor (em retry via outbox).
+                  Some sozinho quando o onSuccess do persistOp confirmar a escrita. */}
+              {userBet.pendingPersist && (
+                <div className="text-[10px] mt-0.5 animate-pulse" style={{ color: '#9CA3AF' }}>
+                  ⟳ sincronizando…
+                </div>
+              )}
+            </>
           ) : showBet && profile && !isPlayed ? (
             betOpen ? (
               <div className="text-xs text-gray-600">Clique para palpitar</div>
