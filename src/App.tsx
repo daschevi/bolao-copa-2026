@@ -67,7 +67,7 @@ export default function App() {
   // Auto-dismiss do toast de sessão expirada após 6 s
   useEffect(() => {
     if (!sessionExpiredMessage) return;
-    const t = setTimeout(clearSessionMessage, 6000);
+    const t = setTimeout(clearSessionMessage, 4000);
     return () => clearTimeout(t);
   }, [sessionExpiredMessage, clearSessionMessage]);
 

@@ -306,7 +306,7 @@ export const useAuthStore = create<AuthState>()(
         //       JWT expirado internamente via isJwtExpiredError + tryRefreshToken)
         //     - JWT expirado há > 5 min → refresh token definitivamente morto → bloqueia
         if (nowSec > sessionExpiresAt + 5 * 60) {
-          set({ sessionExpiredMessage: 'Sua sessão expirou. Faça login novamente para continuar.' });
+          set({ sessionExpiredMessage: 'Reconectando… Tente salvar novamente em instantes.' });
           return false;
         }
         return true;
