@@ -6,7 +6,15 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey) : (null as any);
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken:  true,   // renova o JWT automaticamente antes de expirar
+        persistSession:    true,   // mantém sessão no localStorage entre recargas
+        detectSessionInUrl: true,  // captura o hash do redirect OAuth (PKCE)
+      },
+    })
+  : (null as any);
 
 /**
  * Wrapper que adiciona timeout a qualquer query do Supabase e renova o JWT
@@ -186,12 +194,15 @@ function isJwtExpiredError(msg: string): boolean {
  * — o auto-refresh HTTP não garante que o WS receba o novo token a tempo,
  * o que mantinha o canal Realtime em estado expirado/desconectado.
  * Retorna true se a renovação foi bem-sucedida, false caso contrário.
+ *
+ * ⚠️ NÃO chama getSession() antes do refresh — ambas as funções compartilham o
+ * mutex interno do Supabase JS. Chamar getSession() aqui enquanto o
+ * visibilitychange já está executando refreshSession() causaria bloqueio mútuo
+ * e congelaria a UI. refreshSession() já retorna a sessão renovada diretamente.
  */
 async function tryRefreshToken(): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
     const { data, error } = await supabase.auth.refreshSession();
     if (error || !data.session) return false;
     // Propaga o novo token para o WebSocket do Realtime explicitamente.
@@ -298,20 +309,15 @@ export async function drainOutbox(): Promise<void> {
   const ops = readOutbox();
   if (ops.length === 0) return;
 
-  // Garante sessão ativa antes de executar writes.
-  // Se não houver sessão, as ops ficam na outbox para o próximo drain
-  // (que ocorre após login, visibilitychange ou reconexão de rede).
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      console.warn('[outbox] sem sessão ativa — drenagem adiada');
-      return;
-    }
-  } catch { /* se a verificação falhar, tenta drenar mesmo assim */ }
+  // Não verificamos a sessão via getSession() aqui — essa chamada usa o mutex
+  // interno do Supabase e bloquearia se visibilitychange estiver executando
+  // refreshSession() simultaneamente. Em vez disso, cada op trata erros de JWT
+  // expirado individualmente (isJwtExpiredError → tryRefreshToken) e ops que
+  // falham por falta de sessão ficam na outbox para o próximo drain.
 
   _draining = true;
+  console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
   try {
-    console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
     // Flag: se encontrarmos JWT expirado, renovamos uma vez e relemos as ops.
     let jwtRefreshedThisRun = false;
 
