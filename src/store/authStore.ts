@@ -31,14 +31,9 @@ function genSessionToken(): string {
 async function claimSession(userId: string): Promise<void> {
   if (!isSupabaseConfigured) return;
   const token = genSessionToken();
-  // LOG DIAGNÓSTICO — bug "sessão única quebra ao salvar palpite":
-  // queremos provar se claimSession é chamado mais de uma vez por sessão.
-  // Stack trace mostra QUEM chamou (SIGNED_IN do onAuthStateChange ou outro).
-  console.log('[claimSession] DISPARADO', { userId, newToken: token, stack: new Error().stack });
   localStorage.setItem(SESSION_TOKEN_KEY, token);
   try {
     await supabase.from('profiles').update({ active_session_token: token }).eq('id', userId);
-    console.log('[claimSession] gravado no BD com sucesso', { token });
   } catch (e) {
     console.warn('[session] falha ao gravar active_session_token (continua localmente):', e);
   }
@@ -84,26 +79,14 @@ function subscribeToSessionRevocation(
       (payload: { new?: { active_session_token?: string | null } }) => {
         const newToken   = payload.new?.active_session_token;
         const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
-        // LOG DIAGNÓSTICO — todo UPDATE em profiles dispara aqui, queremos
-        // ver QUAL era o payload completo e a comparação de tokens.
-        console.log('[session-revocation] evento recebido', {
-          newToken,
-          localToken,
-          payloadNew: payload.new,
-          willRevoke: !!(newToken && localToken && newToken !== localToken),
-        });
         // Se newToken bate com local → este device é o dono novo (acabou de
         // gravar). Se diferente → outro device assumiu → expulsa.
         if (newToken && localToken && newToken !== localToken) {
-          console.warn('[session] revogação via realtime — outro device assumiu');
           onRevoked();
         }
       },
     )
-    .subscribe((status: string) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('[session-revocation] canal conectado');
-      }
+    .subscribe(() => {
       // Falhas silenciosas — o polling cobre como fallback. Não fazemos
       // reconnect explícito aqui pra não criar loop em redes hostis.
     });
@@ -318,19 +301,6 @@ export const useAuthStore = create<AuthState>()(
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
           async (event: string, session: import('@supabase/supabase-js').Session | null) => {
-            // ── LOGS DIAGNÓSTICOS — bug "modal trava após ~7 min" ───────────────
-            if (session?.expires_at !== undefined) {
-              const nowSec = Date.now() / 1000;
-              console.log('[AUTH] event:', event);
-              console.log('[AUTH] expires_at raw:', session.expires_at);
-              console.log('[AUTH] typeof:', typeof session.expires_at);
-              console.log('[AUTH] Date.now()/1000:', nowSec);
-              console.log('[AUTH] diff em segundos:', session.expires_at - nowSec);
-            } else {
-              console.log('[AUTH] event:', event, '— sem session/expires_at');
-            }
-            // ────────────────────────────────────────────────────────────────────
-
             if (!session?.user) {
               set({ profile: null, loading: false });
               return;
@@ -371,11 +341,8 @@ export const useAuthStore = create<AuthState>()(
             //     ter feito login enquanto esta aba estava aberta)
             if (event === 'SIGNED_IN') {
               const existingToken = localStorage.getItem(SESSION_TOKEN_KEY);
-              console.log('[SIGNED_IN] verificando claim — existingToken:', existingToken);
               if (!existingToken) {
                 await claimSession(session.user.id);
-              } else {
-                console.log('[SIGNED_IN] já tem token local — pulando claimSession');
               }
             }
 
@@ -468,20 +435,9 @@ export const useAuthStore = create<AuthState>()(
         // sessionExpiresAt é null apenas na janela de startup (initAuth ainda em voo).
         // Nesse intervalo aceitamos otimisticamente — a duração é < 1s e o usuário
         // não consegue interagir com o modal antes de o splash sair.
-        if (sessionExpiresAt === null) {
-          console.log('[CHECK] sessionExpiresAt: null — janela de startup, retornando true');
-          return true;
-        }
+        if (sessionExpiresAt === null) return true;
         const nowSec = Date.now() / 1000;
-
-        // ── LOGS DIAGNÓSTICOS — bug "modal trava após ~7 min" ─────────────────
         const blocking = nowSec > sessionExpiresAt + 300;
-        console.log('[CHECK] sessionExpiresAt:', sessionExpiresAt);
-        console.log('[CHECK] Date.now()/1000:', nowSec);
-        console.log('[CHECK] diff (expires_at - now):', sessionExpiresAt - nowSec, 'segundos');
-        console.log('[CHECK] threshold (expires_at + 300):', sessionExpiresAt + 300);
-        console.log('[CHECK] bloqueando?', blocking);
-        // ──────────────────────────────────────────────────────────────────────
 
         // Só bloqueia se o JWT está expirado há mais de 5 minutos.
         //
@@ -541,12 +497,9 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
           const remoteToken = data?.active_session_token;
-          // LOG DIAGNÓSTICO — bug "sessão única quebra ao salvar palpite":
-          console.log('[verify] local vs remote:', { localToken, remoteToken, match: remoteToken === localToken });
           // remoteToken null = banco ainda não tem (migração não rodou ou
           // login pré-feature). Não desloga — apenas regrava.
           if (remoteToken == null) {
-            console.log('[verify] remoteToken null — regravando local no BD');
             await supabase.from('profiles')
               .update({ active_session_token: localToken })
               .eq('id', profile.id);
