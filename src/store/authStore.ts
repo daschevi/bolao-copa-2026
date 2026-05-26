@@ -31,9 +31,14 @@ function genSessionToken(): string {
 async function claimSession(userId: string): Promise<void> {
   if (!isSupabaseConfigured) return;
   const token = genSessionToken();
+  // LOG DIAGNÓSTICO — bug "sessão única quebra ao salvar palpite":
+  // queremos provar se claimSession é chamado mais de uma vez por sessão.
+  // Stack trace mostra QUEM chamou (SIGNED_IN do onAuthStateChange ou outro).
+  console.log('[claimSession] DISPARADO', { userId, newToken: token, stack: new Error().stack });
   localStorage.setItem(SESSION_TOKEN_KEY, token);
   try {
     await supabase.from('profiles').update({ active_session_token: token }).eq('id', userId);
+    console.log('[claimSession] gravado no BD com sucesso', { token });
   } catch (e) {
     console.warn('[session] falha ao gravar active_session_token (continua localmente):', e);
   }
@@ -79,6 +84,14 @@ function subscribeToSessionRevocation(
       (payload: { new?: { active_session_token?: string | null } }) => {
         const newToken   = payload.new?.active_session_token;
         const localToken = localStorage.getItem(SESSION_TOKEN_KEY);
+        // LOG DIAGNÓSTICO — todo UPDATE em profiles dispara aqui, queremos
+        // ver QUAL era o payload completo e a comparação de tokens.
+        console.log('[session-revocation] evento recebido', {
+          newToken,
+          localToken,
+          payloadNew: payload.new,
+          willRevoke: !!(newToken && localToken && newToken !== localToken),
+        });
         // Se newToken bate com local → este device é o dono novo (acabou de
         // gravar). Se diferente → outro device assumiu → expulsa.
         if (newToken && localToken && newToken !== localToken) {
@@ -356,8 +369,14 @@ export const useAuthStore = create<AuthState>()(
             //   - SIGNED_IN com token local → recarregou aba, NÃO regenerar
             //     (senão sobrescreveríamos o token de outro device que possa
             //     ter feito login enquanto esta aba estava aberta)
-            if (event === 'SIGNED_IN' && !localStorage.getItem(SESSION_TOKEN_KEY)) {
-              await claimSession(session.user.id);
+            if (event === 'SIGNED_IN') {
+              const existingToken = localStorage.getItem(SESSION_TOKEN_KEY);
+              console.log('[SIGNED_IN] verificando claim — existingToken:', existingToken);
+              if (!existingToken) {
+                await claimSession(session.user.id);
+              } else {
+                console.log('[SIGNED_IN] já tem token local — pulando claimSession');
+              }
             }
 
             // Subscribe (idempotente) ao canal Realtime de revogação. Se já
@@ -522,9 +541,12 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
           const remoteToken = data?.active_session_token;
+          // LOG DIAGNÓSTICO — bug "sessão única quebra ao salvar palpite":
+          console.log('[verify] local vs remote:', { localToken, remoteToken, match: remoteToken === localToken });
           // remoteToken null = banco ainda não tem (migração não rodou ou
           // login pré-feature). Não desloga — apenas regrava.
           if (remoteToken == null) {
+            console.log('[verify] remoteToken null — regravando local no BD');
             await supabase.from('profiles')
               .update({ active_session_token: localToken })
               .eq('id', profile.id);
