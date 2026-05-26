@@ -80,13 +80,20 @@ export default function App() {
     return cleanup;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Após sessão verificada: drena outbox (agora com auth.uid() disponível)
-  // e sincroniza tudo. Marca o timestamp de sync após conclusão para que o
-  // handler de visibilitychange saiba que o cache está fresco.
+  // Após sessão verificada: acorda o servidor, drena outbox e sincroniza tudo.
+  //
+  // ⚠️ wakeUpSupabase ANTES dos syncs paralelos é crítico:
+  //   - Se o usuário fica deslogado por > 5 min, o free tier hiberna
+  //   - No boot, todos os syncs disparam em paralelo via Promise.allSettled
+  //   - Sem wake-up, as 3 chamadas competem pela 1ª resposta do cold start
+  //     e estouram timeout simultâneo
+  //   - drainOutbox() tem wake-up interno, mas retorna cedo se a outbox está
+  //     vazia — então o wake-up dele não cobre boot normal
   useEffect(() => {
     if (!sessionChecked) return;
 
     const runSync = async () => {
+      await wakeUpSupabase();
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
@@ -97,8 +104,10 @@ export default function App() {
 
     runSync();
 
-    // Segundo sync após 15s — cobre cold start do Supabase free tier
+    // Segundo sync após 15s — fallback se a 1ª passada ainda pegou cold start.
+    // Re-acorda o servidor por garantia.
     const retryTimer = setTimeout(async () => {
+      await wakeUpSupabase();
       await Promise.allSettled([
         syncFromSupabase(),
         ...(profile ? [fetchAllBets(), syncPhaseSettings()] : []),
@@ -142,7 +151,12 @@ export default function App() {
       //    reconecta agora em vez de esperar o próximo tick do keepalive (4 min).
       reconnectRealtimeRef.current?.();
 
-      // 4. Drena outbox e re-sincroniza tudo
+      // 4. Acorda o servidor antes de drenar/sync. Background longo derruba o
+      //    keepalive (browser throttles timers em background), então o free tier
+      //    pode ter hibernado mesmo com keepalive configurado.
+      await wakeUpSupabase();
+
+      // 5. Drena outbox e re-sincroniza tudo
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
