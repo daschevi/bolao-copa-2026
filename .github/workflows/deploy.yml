@@ -34,6 +34,12 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          # Vite só inlina variáveis com prefixo VITE_ no bundle. Sem isso o
+          # cliente Supabase é instanciado com URL/key vazios e isSupabaseConfigured
+          # vira false ("Supabase não configurado." na tela de login).
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
