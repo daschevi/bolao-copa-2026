@@ -206,25 +206,36 @@ export default function App() {
   // Requer: no painel Supabase → Database → Replication → adicionar
   // match_results, bets e phase_settings à publication `supabase_realtime`.
   //
-  // Estratégia de resiliência em duas camadas:
+  // ⚠️ Resiliência contra loops de queda (firewall/proxy corporativo matando WS):
   //
-  //   1. REATIVA (callback de status): canal cai com sinal explícito
-  //      (CHANNEL_ERROR / TIMED_OUT / CLOSED) → sync + reconexão em 5 s
-  //
-  //   2. PROATIVA (keepalive 4 min): canal fecha silenciosamente sem disparar
-  //      o callback — comum no free tier (~6 min idle timeout) e no mobile
-  //      em background. setInterval checa channel.state e reconecta se não
-  //      estiver 'joined'. visibilitychange também chama checkAndReconnect()
-  //      imediatamente ao voltar para o app.
+  //   - Backoff exponencial: 5s, 10s, 20s, 40s, 60s (cap)
+  //   - Após 8 falhas consecutivas, para de tentar por 5 min (circuit breaker)
+  //   - NÃO dispara syncFromSupabase/fetchAllBets/syncPhaseSettings em cada queda —
+  //     só se o canal ficou estável por >= 30s antes de cair. Quedas em cascata
+  //     (< 30s entre connect e close) indicam loop de firewall, não evento perdido.
+  //     Sem esse guard, cada ciclo de 6s disparava 3 queries pesadas, saturava o
+  //     event loop e travava a UI.
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
 
     let mounted       = true;
     let activeChannel: ReturnType<typeof supabase.channel> | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let consecutiveFailures = 0;
+    let lastConnectedAt = 0;        // timestamp do último SUBSCRIBED
+    let circuitOpenUntil = 0;       // se > now, não tenta reconectar
+
+    const BACKOFF_STEPS = [5000, 10000, 20000, 40000, 60000];
+    const STABLE_THRESHOLD_MS = 30_000;    // canal precisa durar 30s pra ser "estável"
+    const MAX_FAILURES_BEFORE_CIRCUIT = 8;
+    const CIRCUIT_OPEN_DURATION = 5 * 60_000; // 5 min sem tentar
 
     const connect = () => {
       if (!mounted) return;
+      if (Date.now() < circuitOpenUntil) {
+        console.warn('[realtime] circuit breaker aberto — não tentando reconectar agora');
+        return;
+      }
 
       // Timestamp no nome: cada tentativa cria um canal novo — elimina ghost channels
       // acumulados de ciclos rápidos de logout/login ou reconexão.
@@ -247,22 +258,46 @@ export default function App() {
         .subscribe((status: string, err?: Error) => {
           if (status === 'SUBSCRIBED') {
             console.log('[realtime] canal conectado:', channelName);
+            lastConnectedAt = Date.now();
+            consecutiveFailures = 0;
           } else if (
             status === 'CHANNEL_ERROR' ||
             status === 'TIMED_OUT'     ||
             status === 'CLOSED'
           ) {
-            // Camada 1 — sinal explícito de queda
-            console.warn('[realtime] canal perdido —', status, err?.message ?? '');
-            syncFromSupabase();
-            fetchAllBets();
-            syncPhaseSettings();
+            const wasStable = lastConnectedAt > 0 && (Date.now() - lastConnectedAt) >= STABLE_THRESHOLD_MS;
+            consecutiveFailures += 1;
+
+            console.warn(
+              '[realtime] canal perdido —', status,
+              `(falhas: ${consecutiveFailures}, estável: ${wasStable})`,
+              err?.message ?? ''
+            );
+
+            // Só dispara sync se a conexão durou tempo suficiente — caso contrário
+            // é loop de queda e não vale a pena queimar queries que vão dar timeout.
+            if (wasStable) {
+              syncFromSupabase();
+              fetchAllBets();
+              syncPhaseSettings();
+            }
+
+            // Circuit breaker: muitas falhas seguidas → para de tentar por 5 min
+            if (consecutiveFailures >= MAX_FAILURES_BEFORE_CIRCUIT) {
+              circuitOpenUntil = Date.now() + CIRCUIT_OPEN_DURATION;
+              consecutiveFailures = 0; // reset para quando voltar
+              console.error('[realtime] muitas falhas — pausando reconexões por 5 min (provável firewall bloqueando WebSocket)');
+              return;
+            }
+
             if (mounted && !reconnectTimer) {
+              const delay = BACKOFF_STEPS[Math.min(consecutiveFailures - 1, BACKOFF_STEPS.length - 1)];
+              console.log(`[realtime] reconectando em ${delay / 1000}s`);
               reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
                 if (activeChannel) { supabase.removeChannel(activeChannel); activeChannel = null; }
                 connect();
-              }, 5000);
+              }, delay);
             }
           }
         });
