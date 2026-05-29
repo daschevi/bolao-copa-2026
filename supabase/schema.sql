@@ -63,7 +63,10 @@ create policy "profiles_update" on public.profiles
   using  (auth.uid() = id)
   with check (
     auth.uid() = id
-    -- is_admin deve permanecer igual ao valor atual — impede auto-promoção via API
+    -- is_admin deve permanecer igual ao valor atual — impede auto-promoção via API.
+    -- Nota sobre recursão: a subquery lê profiles dentro de uma policy UPDATE de profiles.
+    -- Não há loop: subquery é SELECT, coberto por profiles_select (using true),
+    -- nunca por profiles_update. Seguro no PostgreSQL 15+ (versão do Supabase).
     AND is_admin = (select is_admin from public.profiles where id = auth.uid())
   );
 

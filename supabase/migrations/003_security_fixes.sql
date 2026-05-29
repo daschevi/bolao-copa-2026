@@ -25,6 +25,10 @@ create policy "profiles_update" on public.profiles
     -- is_admin deve permanecer igual ao valor atual no banco.
     -- Impede que qualquer usuário se auto-promova via API REST.
     -- Para conceder admin: UPDATE direto no SQL Editor com service_role.
+    --
+    -- Nota sobre recursão: subquery lê profiles dentro de policy UPDATE de profiles.
+    -- Não há loop: subquery é SELECT, coberto por profiles_select (using true),
+    -- nunca por profiles_update. Seguro no PostgreSQL 15+ (versão do Supabase).
     AND is_admin = (select is_admin from public.profiles where id = auth.uid())
   );
 
