@@ -134,22 +134,33 @@ async function fetchOrCreateProfile(
     console.error('[authStore] Erro ao buscar perfil:', fetchErr);
   }
 
-  const username =
+  const baseName =
     (userMeta?.full_name as string)?.trim() ||
     (userMeta?.name as string)?.trim() ||
     userEmail.split('@')[0] ||
     'jogador';
 
-  // INSERT com colunas snake_case conforme o schema do banco
-  const { data: inserted, error: insertErr } = await supabase
-    .from('profiles')
-    .insert({ id: userId, username, is_admin: false })
-    .select()
-    .single();
+  // Tenta inserir com nome base; em caso de conflito de unique (23505),
+  // adiciona sufixo numérico crescente até encontrar um nome disponível.
+  // Cobre homônimos: "João Silva" → "João Silva2", "João Silva3", etc.
+  let inserted: Record<string, unknown> | null = null;
+  let insertErr: { message: string; code?: string } | null = null;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const username = attempt === 0 ? baseName : `${baseName}${attempt + 1}`;
+    const result = await supabase
+      .from('profiles')
+      .insert({ id: userId, username, is_admin: false })
+      .select()
+      .single();
+    if (!result.error) { inserted = result.data as Record<string, unknown>; break; }
+    // 23505 = unique_violation (PostgreSQL) — tenta próximo sufixo
+    if (result.error.code !== '23505') { insertErr = result.error; break; }
+  }
 
-  if (insertErr) {
+  if (!inserted) {
     console.error('[authStore] Erro ao criar perfil:', insertErr);
-    // Retorna perfil temporário para não quebrar a sessão
+    // Fallback com sufixo do UUID para garantir unicidade mesmo sem BD
+    const username = `${baseName}-${userId.slice(0, 6)}`;
     return { id: userId, username, isAdmin: false, createdAt: new Date().toISOString() };
   }
 
@@ -211,6 +222,11 @@ interface AuthState {
   verifySessionOwnership: () => Promise<void>;
 }
 
+// SEGURANÇA — is_admin no store/localStorage controla apenas visibilidade de UI.
+// Qualquer escrita admin (match_results, phase_settings) é validada pelo RLS
+// no banco via subquery: `select is_admin from profiles where id = auth.uid()`.
+// Editar localStorage para isAdmin=true mostra os botões mas todas as writes
+// são barradas pelo Supabase — não é uma vulnerabilidade real.
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({

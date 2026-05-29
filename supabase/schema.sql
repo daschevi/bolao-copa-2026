@@ -70,17 +70,15 @@ create policy "profiles_update" on public.profiles
     AND is_admin = (select is_admin from public.profiles where id = auth.uid())
   );
 
--- Bets: qualquer usuário autenticado pode ler (placar visível no leaderboard).
+-- Bets: apenas usuários autenticados podem ler (não expõe dados a visitantes anônimos).
 -- Sem policy de DELETE intencional — palpite feito não pode ser cancelado.
 -- Se cancelamento for necessário no futuro, adicionar policy aqui.
-create policy "bets_select" on public.bets for select using (true);
+create policy "bets_select" on public.bets for select using (auth.uid() is not null);
 create policy "bets_insert" on public.bets for insert with check (auth.uid() = user_id);
 create policy "bets_update" on public.bets for update using (auth.uid() = user_id);
 
--- Match results: leitura pública intencional — os placares são informação aberta
--- para todos os participantes do bolão. A anon key no bundle JS é esperada pelo
--- Supabase e não concede acesso além do que as policies permitem.
-create policy "results_select" on public.match_results for select using (true);
+-- Match results: apenas usuários autenticados podem ler.
+create policy "results_select" on public.match_results for select using (auth.uid() is not null);
 create policy "results_insert" on public.match_results for insert
   with check (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
 create policy "results_update" on public.match_results for update
@@ -88,8 +86,8 @@ create policy "results_update" on public.match_results for update
 create policy "results_delete" on public.match_results for delete
   using (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
 
--- Phase settings: anyone can read, only admins can write
-create policy "phase_settings_select" on public.phase_settings for select using (true);
+-- Phase settings: apenas usuários autenticados podem ler.
+create policy "phase_settings_select" on public.phase_settings for select using (auth.uid() is not null);
 create policy "phase_settings_write"  on public.phase_settings for all
   using      (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true))
   with check (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));

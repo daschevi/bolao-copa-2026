@@ -1,14 +1,10 @@
 -- Migration: 003_security_fixes
 -- ─────────────────────────────────────────────────────────────────────────────
--- Corrige dois problemas críticos de segurança identificados em code review:
+-- Corrige problemas de segurança identificados em code review (v1 e v2):
 --
--- 1. profiles_update sem WITH CHECK: qualquer usuário autenticado podia se
---    auto-promover a admin via API REST (supabase.from('profiles').update({is_admin:true})).
---    Fix: WITH CHECK que valida que is_admin não pode mudar via API.
---
--- 2. Restrição de domínio só no cliente: o parâmetro `hd` no OAuth é hint,
---    não restrição. Qualquer email Google obtinha JWT válido e acessava a API.
---    Fix: trigger BEFORE INSERT em auth.users que rejeita emails fora do domínio.
+-- 1. profiles_update sem WITH CHECK → privilege escalation via is_admin
+-- 2. Restrição de domínio só no cliente → bypass via JWT direto
+-- 3. SELECT policies com using(true) → dados expostos a requisições anônimas
 --
 -- Aplicar no Supabase Studio → SQL Editor → New Query → Run.
 -- Idempotente: DROP IF EXISTS + CREATE OR REPLACE garantem re-execução segura.
@@ -49,3 +45,19 @@ drop trigger if exists check_email_domain_trigger on auth.users;
 create trigger check_email_domain_trigger
   before insert on auth.users
   for each row execute function public.check_email_domain();
+
+-- ── Fix 3: SELECT policies restritas a usuários autenticados ─────────────────
+-- Substitui using(true) por using(auth.uid() is not null) nas três tabelas
+-- de dados do bolão — impede leitura anônima via anon key.
+
+drop policy if exists "bets_select" on public.bets;
+create policy "bets_select" on public.bets
+  for select using (auth.uid() is not null);
+
+drop policy if exists "results_select" on public.match_results;
+create policy "results_select" on public.match_results
+  for select using (auth.uid() is not null);
+
+drop policy if exists "phase_settings_select" on public.phase_settings;
+create policy "phase_settings_select" on public.phase_settings
+  for select using (auth.uid() is not null);
