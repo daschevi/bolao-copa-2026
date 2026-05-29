@@ -263,11 +263,14 @@ export function markServerActive(): void {
 export async function wakeUpSupabase(): Promise<void> {
   if (!isSupabaseConfigured) return;
   try {
-    await Promise.race([
-      supabase.from('profiles').select('id').limit(1),
-      new Promise(r => setTimeout(r, 8000)),
+    // O timeout resolve com `null`; a query resolve com `{ data, error }` (nunca null).
+    // Só marcamos ativo se a query venceu — timeout significa servidor ainda hibernando,
+    // e a próxima chamada real precisaria de outro wake-up se marcássemos aqui.
+    const result = await Promise.race([
+      supabase.from('profiles').select('id').limit(1) as Promise<unknown>,
+      new Promise<null>(r => setTimeout(() => r(null), 8000)),
     ]);
-    markServerActive();
+    if (result !== null) markServerActive();
   } catch {
     // ignora — objetivo é só fazer o servidor responder, não usar a resposta
   }

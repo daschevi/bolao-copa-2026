@@ -54,14 +54,29 @@ alter table public.phase_settings enable row level security;
 -- Profiles: anyone can read, only self can write
 create policy "profiles_select" on public.profiles for select using (true);
 create policy "profiles_insert" on public.profiles for insert with check (auth.uid() = id);
-create policy "profiles_update" on public.profiles for update using (auth.uid() = id);
+-- WITH CHECK garante que is_admin não pode ser alterado via API REST por nenhum usuário.
+-- Apenas username e active_session_token são editáveis pelo próprio dono.
+-- Para promover a admin use: UPDATE profiles SET is_admin = true WHERE id = '...'
+-- diretamente no SQL Editor (requer service_role / acesso de superuser).
+create policy "profiles_update" on public.profiles
+  for update
+  using  (auth.uid() = id)
+  with check (
+    auth.uid() = id
+    -- is_admin deve permanecer igual ao valor atual — impede auto-promoção via API
+    AND is_admin = (select is_admin from public.profiles where id = auth.uid())
+  );
 
--- Bets: anyone can read, only owner can write
+-- Bets: qualquer usuário autenticado pode ler (placar visível no leaderboard).
+-- Sem policy de DELETE intencional — palpite feito não pode ser cancelado.
+-- Se cancelamento for necessário no futuro, adicionar policy aqui.
 create policy "bets_select" on public.bets for select using (true);
 create policy "bets_insert" on public.bets for insert with check (auth.uid() = user_id);
 create policy "bets_update" on public.bets for update using (auth.uid() = user_id);
 
--- Match results: anyone can read, only admins can write
+-- Match results: leitura pública intencional — os placares são informação aberta
+-- para todos os participantes do bolão. A anon key no bundle JS é esperada pelo
+-- Supabase e não concede acesso além do que as policies permitem.
 create policy "results_select" on public.match_results for select using (true);
 create policy "results_insert" on public.match_results for insert
   with check (exists (select 1 from public.profiles where id = auth.uid() and is_admin = true));
@@ -78,6 +93,25 @@ create policy "phase_settings_write"  on public.phase_settings for all
 
 -- Make the first registered user an admin (run manually after first signup):
 -- update public.profiles set is_admin = true where id = '<user-uuid>';
+
+-- ── Restrição de domínio no servidor ─────────────────────────────────────────
+-- O parâmetro `hd` no OAuth é apenas hint para o Google — não bloqueia logins
+-- de outros domínios. Este trigger garante a restrição no banco, antes de
+-- qualquer linha ser inserida em auth.users.
+create or replace function public.check_email_domain()
+returns trigger language plpgsql security definer as $$
+begin
+  if new.email is null or new.email not ilike '%@golfleet.com.br' then
+    raise exception 'Acesso restrito a colaboradores @golfleet.com.br';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists check_email_domain_trigger on auth.users;
+create trigger check_email_domain_trigger
+  before insert on auth.users
+  for each row execute function public.check_email_domain();
 
 -- Migration: add team columns to existing match_results table (run if table already exists):
 -- alter table public.match_results add column if not exists home_team_id text;
