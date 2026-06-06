@@ -138,25 +138,30 @@ function sameTarget(a: OutboxOp, b: OutboxOp): boolean {
 }
 
 /**
- * Erros permanentes: re-tentar nunca vai resolver.
- * Nesses casos a op deve ser descartada da outbox imediatamente em vez de
- * ficar até MAX_ATTEMPTS poluindo rede, logs e localStorage.
- *
- * Exemplos: coluna inexistente, tabela não criada, violação de RLS, schema cache miss.
- *
- * ⚠️ NÃO incluir aqui códigos transitórios. Em particular:
- *   - PGRST301 = "JWT expired" → transitório (basta usuário re-logar; reconciliação
- *     do fetchAllBets cobre bets, e ops na outbox vão drenar quando a sessão voltar)
- *   - PGRST116 = "0 rows when expecting one" → contexto de leitura, não de write
+ * Erros de schema: coluna/tabela inexistente. Realmente irrecuperáveis —
+ * descarta da outbox imediatamente.
  */
-function isPermanentError(msg: string): boolean {
+function isSchemaError(msg: string): boolean {
   const m = (msg ?? '').toLowerCase();
   return /column .* does not exist/.test(m)
       || /relation .* does not exist/.test(m)
-      || /row-level security/.test(m)
-      || /violates row-level security/.test(m)
       || /pgrst204/.test(m)   // schema cache miss
       || /pgrst104/.test(m);  // singularity violation (múltiplas rows onde esperava uma)
+}
+
+/**
+ * RLS-block. **Pode ser** efeito colateral de sessão expirada silenciosamente:
+ * quando o JWT está stale, o Postgres trata o request como anônimo,
+ * `auth.uid()` vira null e qualquer policy `auth.uid() = user_id` falha — não
+ * como "JWT expired" explícito, mas como "violates RLS". Por isso, antes de
+ * descartar a op, o persistOp/drainOutbox tentam renovar o token uma vez e
+ * re-executar. Se ainda RLS, aí sim é permanente (admin tentando escrever em
+ * tabela só-admin sem ser admin, por exemplo).
+ */
+function isRlsError(msg: string): boolean {
+  const m = (msg ?? '').toLowerCase();
+  return /row-level security/.test(m)
+      || /violates row-level security/.test(m);
 }
 
 function enqueueOutbox(input: OutboxOpInput): string {
@@ -325,6 +330,7 @@ export async function persistOp(
   const label = input.label;
 
   let lastErrorMsg = '';
+  let rlsRefreshAttempted = false;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const result = await Promise.race([
@@ -340,25 +346,40 @@ export async function persistOp(
         return;
       }
       lastErrorMsg = result.error.message;
-      // Erro permanente: re-tentar não vai resolver — descarta imediatamente
-      if (isPermanentError(lastErrorMsg)) {
+      // Schema irrecuperável: descarta imediatamente
+      if (isSchemaError(lastErrorMsg)) {
         removeFromOutbox(id);
-        console.error(`[${label}] erro permanente, descartando da outbox:`, lastErrorMsg);
+        console.error(`[${label}] erro de schema, descartando da outbox:`, lastErrorMsg);
         onError?.(lastErrorMsg);
         return;
       }
-      // JWT expirado: renova o token antes da próxima tentativa.
-      // Cobre o cenário de app em background no mobile por > 1h sem auto-refresh.
+      // JWT expirado explícito: renova e re-tenta
       if (isJwtExpiredError(lastErrorMsg)) {
         console.warn(`[${label}] JWT expirado — renovando token antes da próxima tentativa`);
         const refreshed = await tryRefreshToken();
         if (!refreshed) {
-          // Refresh token também expirado — não adianta re-tentar agora
           bumpAttempts(id);
           console.warn(`[${label}] refresh falhou — op permanece na outbox para próxima sessão`);
           onError?.('Sessão expirada. Faça login novamente para sincronizar.');
           return;
         }
+        // re-tenta com token renovado (não conta como backoff)
+        continue;
+      }
+      // RLS-block: pode ser efeito colateral de sessão expirada silenciosamente
+      // (auth.uid() vira null → policy `auth.uid() = user_id` falha como RLS).
+      // Renova UMA vez e re-tenta; se ainda for RLS, aí é realmente irrecuperável.
+      if (isRlsError(lastErrorMsg)) {
+        if (!rlsRefreshAttempted) {
+          rlsRefreshAttempted = true;
+          console.warn(`[${label}] RLS-block — tentando renovar token antes de descartar`);
+          const refreshed = await tryRefreshToken();
+          if (refreshed) continue; // re-tenta com token novo
+        }
+        removeFromOutbox(id);
+        console.error(`[${label}] RLS persistiu após refresh, descartando:`, lastErrorMsg);
+        onError?.('Sessão inválida — palpite não pôde ser salvo. Saia e entre novamente.');
+        return;
       }
       console.warn(`[${label}] tentativa ${attempt}/${retries}:`, lastErrorMsg);
     } catch (e) {
@@ -402,8 +423,34 @@ export async function drainOutbox(): Promise<void> {
   _draining = true;
   console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
   try {
-    // Flag: se encontrarmos JWT expirado, renovamos uma vez e relemos as ops.
-    let jwtRefreshedThisRun = false;
+    // Renovamos o token UMA VEZ por drain quando vemos JWT-expired OU RLS-block
+    // (que pode ser efeito colateral de sessão silenciosamente expirada).
+    let tokenRefreshedThisRun = false;
+
+    const tryRetryAfterRefresh = async (op: OutboxOp) => {
+      try {
+        const retryResult = await Promise.race([
+          executeOp(op),
+          new Promise<{ error: { message: string } }>(r =>
+            setTimeout(() => r({ error: { message: 'timeout' } }), 25000)
+          ),
+        ]);
+        if (!retryResult.error) {
+          removeFromOutbox(op.id);
+          console.log(`[outbox:${op.label}] reenviado com sucesso após refresh`);
+        } else if (isSchemaError(retryResult.error.message) || isRlsError(retryResult.error.message)) {
+          // Mesmo após refresh ainda é schema/RLS — irrecuperável, descarta
+          removeFromOutbox(op.id);
+          console.error(`[outbox:${op.label}] persistiu após refresh, descartando:`, retryResult.error.message);
+        } else {
+          bumpAttempts(op.id);
+          console.warn(`[outbox:${op.label}] ainda falha após refresh:`, retryResult.error.message);
+        }
+      } catch (e) {
+        bumpAttempts(op.id);
+        console.warn(`[outbox:${op.label}] exceção após refresh:`, e);
+      }
+    };
 
     for (const op of ops) {
       if (op.attempts >= MAX_ATTEMPTS) {
@@ -421,38 +468,42 @@ export async function drainOutbox(): Promise<void> {
         if (!result.error) {
           removeFromOutbox(op.id);
           console.log(`[outbox:${op.label}] reenviado com sucesso`);
-        } else if (isPermanentError(result.error.message)) {
-          // Erro permanente: re-tentar nunca vai resolver — descarta agora
+        } else if (isSchemaError(result.error.message)) {
+          // Schema irrecuperável: descarta
           removeFromOutbox(op.id);
-          console.error(`[outbox:${op.label}] erro permanente, descartando:`, result.error.message);
-        } else if (isJwtExpiredError(result.error.message) && !jwtRefreshedThisRun) {
-          // JWT expirado durante o drain (app voltou do background).
-          // Renova o token uma vez por ciclo de drenagem e re-tenta esta op.
+          console.error(`[outbox:${op.label}] erro de schema, descartando:`, result.error.message);
+        } else if (isJwtExpiredError(result.error.message)) {
+          // JWT expirado explícito
+          if (tokenRefreshedThisRun) {
+            // Já renovamos neste run e ainda dá JWT expired — sessão morta
+            console.warn('[outbox] JWT expirado mesmo após refresh — interrompendo drenagem');
+            break;
+          }
+          tokenRefreshedThisRun = true;
           console.warn('[outbox] JWT expirado — renovando token e re-tentando op');
-          jwtRefreshedThisRun = true;
           const refreshed = await tryRefreshToken();
           if (!refreshed) {
             console.warn('[outbox] refresh falhou — drenagem interrompida até próxima sessão');
-            break; // abandona este ciclo; ops ficam na outbox
+            break;
           }
-          // Re-tenta esta op com o token novo
-          try {
-            const retryResult = await Promise.race([
-              executeOp(op),
-              new Promise<{ error: { message: string } }>(r =>
-                setTimeout(() => r({ error: { message: 'timeout' } }), 25000)
-              ),
-            ]);
-            if (!retryResult.error) {
+          await tryRetryAfterRefresh(op);
+        } else if (isRlsError(result.error.message)) {
+          // RLS-block: pode ser sessão silenciosamente expirada.
+          // Renova UMA vez por drain e re-tenta; se ainda RLS, descarta.
+          if (tokenRefreshedThisRun) {
+            removeFromOutbox(op.id);
+            console.error(`[outbox:${op.label}] RLS persistiu após refresh, descartando:`, result.error.message);
+          } else {
+            tokenRefreshedThisRun = true;
+            console.warn('[outbox] RLS-block — tentando renovar token antes de descartar');
+            const refreshed = await tryRefreshToken();
+            if (!refreshed) {
+              // Refresh falhou → sessão morta. Descarta esta op (RLS sem sessão é permanente).
               removeFromOutbox(op.id);
-              console.log(`[outbox:${op.label}] reenviado com sucesso após refresh`);
-            } else {
-              bumpAttempts(op.id);
-              console.warn(`[outbox:${op.label}] ainda falha após refresh:`, retryResult.error.message);
+              console.error(`[outbox:${op.label}] RLS sem sessão válida, descartando:`, result.error.message);
+              continue;
             }
-          } catch (e) {
-            bumpAttempts(op.id);
-            console.warn(`[outbox:${op.label}] exceção após refresh:`, e);
+            await tryRetryAfterRefresh(op);
           }
         } else {
           bumpAttempts(op.id);
