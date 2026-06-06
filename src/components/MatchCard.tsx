@@ -80,10 +80,13 @@ function deadlineLabel(match: Match, phaseDeadline: string | null): string {
 
   const diff = deadlineDate.getTime() - Date.now();
   if (diff <= 0) return 'Palpites encerrados';
-  const days  = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  if (days > 0) return `Fecha em ${days}d ${hours}h`;
-  return `Fecha em ${hours}h`;
+  const days    = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours   = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  if (days > 0)   return `Fecha em ${days}d ${hours}h`;
+  if (hours > 0)  return `Fecha em ${hours}h ${minutes}min`;
+  if (minutes > 0) return `Fecha em ${minutes}min`;
+  return 'Fecha em menos de 1min';
 }
 
 /** Aceita só dígitos inteiros 0–20. Remove zeros à esquerda, rejeita negativos/decimais/texto. */
