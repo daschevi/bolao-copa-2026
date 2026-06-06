@@ -68,7 +68,7 @@ create policy "bets_insert" on public.bets for insert
         select 1 from public.phase_settings ps
         where ps.stage = public.match_id_to_stage(match_id)
           and ps.bets_deadline is not null
-          and now() > ps.bets_deadline
+          and now() > ps.bets_deadline::timestamptz
       )
     )
   );
@@ -93,7 +93,7 @@ create policy "bets_update" on public.bets for update
         select 1 from public.phase_settings ps
         where ps.stage = public.match_id_to_stage(match_id)
           and ps.bets_deadline is not null
-          and now() > ps.bets_deadline
+          and now() > ps.bets_deadline::timestamptz
       )
     )
   );
