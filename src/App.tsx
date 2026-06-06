@@ -7,6 +7,7 @@ import { Knockout } from './pages/Knockout';
 import { MyBets } from './pages/MyBets';
 import { Leaderboard } from './pages/Leaderboard';
 import { Rules } from './pages/Rules';
+import { AuditLog } from './pages/AuditLog';
 import { useAuthStore } from './store/authStore';
 import { useTournamentStore } from './store/tournamentStore';
 import { useBetsStore } from './store/betsStore';
@@ -407,6 +408,7 @@ export default function App() {
           <Route path="/meus-palpites" element={<RequireAuth><MyBets /></RequireAuth>} />
           <Route path="/classificacao" element={<RequireAuth><Leaderboard /></RequireAuth>} />
           <Route path="/regras"        element={<RequireAuth><Rules /></RequireAuth>} />
+          <Route path="/auditoria"     element={<RequireAuth><AuditLog /></RequireAuth>} />
           <Route path="*"              element={<Navigate to={profile ? '/grupos' : '/login'} replace />} />
         </Routes>
       </HashRouter>

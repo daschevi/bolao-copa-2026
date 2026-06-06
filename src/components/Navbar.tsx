@@ -138,16 +138,29 @@ export function Navbar() {
                       style={{ background: '#111111', border: '1px solid #1F1F1F', boxShadow: '0 8px 32px #00000080' }}
                     >
                       {isAdmin && (
-                        <button
-                          onClick={() => { setDropdownOpen(false); setPhaseModal(true); }}
-                          className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium transition-all text-left"
-                          style={{ color: '#22C55E' }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#22C55E10'; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                        >
-                          <span>⚙️</span>
-                          <span>Fases</span>
-                        </button>
+                        <>
+                          <button
+                            onClick={() => { setDropdownOpen(false); setPhaseModal(true); }}
+                            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium transition-all text-left"
+                            style={{ color: '#22C55E' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#22C55E10'; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                          >
+                            <span>⚙️</span>
+                            <span>Fases</span>
+                          </button>
+                          <Link
+                            to="/auditoria"
+                            onClick={() => setDropdownOpen(false)}
+                            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium transition-all"
+                            style={{ color: '#22C55E', borderTop: '1px solid #1F1F1F' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#22C55E10'; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                          >
+                            <span>📋</span>
+                            <span>Auditoria</span>
+                          </Link>
+                        </>
                       )}
 
                       <div style={{ borderTop: isAdmin ? '1px solid #1F1F1F' : 'none' }}>
@@ -243,9 +256,9 @@ export function Navbar() {
               })}
             </div>
 
-            {/* ⚙ Fases — só admin, mobile */}
+            {/* ⚙ Admin tools — mobile */}
             {isAdmin && (
-              <div className="px-4 pb-1" style={{ borderTop: '1px solid #1A1A1A' }}>
+              <div className="px-4 pb-1 space-y-2" style={{ borderTop: '1px solid #1A1A1A' }}>
                 <button
                   onClick={() => { setOpen(false); setPhaseModal(true); }}
                   className="w-full flex items-center gap-3 py-2.5 px-3 rounded-lg text-sm font-medium transition-all mt-2"
@@ -254,6 +267,15 @@ export function Navbar() {
                   <span>⚙️</span>
                   <span>Configurar Fases</span>
                 </button>
+                <Link
+                  to="/auditoria"
+                  onClick={() => setOpen(false)}
+                  className="w-full flex items-center gap-3 py-2.5 px-3 rounded-lg text-sm font-medium transition-all"
+                  style={{ color: '#22C55E', background: '#22C55E10', border: '1px solid #22C55E30' }}
+                >
+                  <span>📋</span>
+                  <span>Auditoria</span>
+                </Link>
               </div>
             )}
 
