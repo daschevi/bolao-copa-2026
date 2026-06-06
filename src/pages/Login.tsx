@@ -42,23 +42,13 @@ export function Login() {
         {/* Hero */}
         <div className="text-center mb-10">
 
-          {/* Logo Golfleet com backdrop semi-transparente */}
+          {/* Logo Golfleet */}
           <div className="flex justify-center mb-6">
-            <div
-              className="rounded-2xl p-4 flex items-center justify-center"
-              style={{
-                background: 'rgba(131, 0, 255, 0.08)',
-                border: '1px solid rgba(131, 0, 255, 0.15)',
-                backdropFilter: 'blur(12px)',
-              }}
-            >
-              <img
-                src="https://azmlwmrfskqfgdfsccxf.supabase.co/storage/v1/object/public/images/G-degrade.png"
-                alt="Golfleet"
-                className="h-16 w-auto object-contain"
-                style={{ filter: 'drop-shadow(0 0 16px rgba(131, 0, 255, 0.5))' }}
-              />
-            </div>
+            <img
+              src="https://azmlwmrfskqfgdfsccxf.supabase.co/storage/v1/object/public/images/G-degrade.png"
+              alt="Golfleet"
+              className="h-16 w-auto object-contain"
+            />
           </div>
 
           <h1
