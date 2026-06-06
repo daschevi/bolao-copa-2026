@@ -31,18 +31,21 @@
 --   Final:        FINAL          → 'final'
 
 create or replace function public.match_id_to_stage(mid text)
-returns text language plpgsql immutable as $$
+returns text language plpgsql immutable as $body$
 begin
-  if mid ~ '^[A-L]-[1-6]$' then return 'group'; end if;
-  if mid like 'R32-%'       then return 'r32';   end if;
-  if mid like 'R16-%'       then return 'r16';   end if;
-  if mid like 'QF-%'        then return 'qf';    end if;
-  if mid like 'SF-%'        then return 'sf';    end if;
-  if mid = 'THIRD'          then return 'third'; end if;
-  if mid = 'FINAL'          then return 'final'; end if;
+  -- Grupos: A-1 … L-6 (letra de grupo + hífen + número de 1 a 6)
+  -- Usa similar_to em vez de ~ para evitar '$' no corpo da função, que
+  -- confunde o parser JS do Supabase Studio ao processar delimitadores $$.
+  if mid similar to '[A-L]-[1-6]' then return 'group'; end if;
+  if mid like 'R32-%'             then return 'r32';   end if;
+  if mid like 'R16-%'             then return 'r16';   end if;
+  if mid like 'QF-%'              then return 'qf';    end if;
+  if mid like 'SF-%'              then return 'sf';    end if;
+  if mid = 'THIRD'                then return 'third'; end if;
+  if mid = 'FINAL'                then return 'final'; end if;
   return null; -- match_id desconhecido → fail-open (não bloqueia)
 end;
-$$;
+$body$;
 
 -- ── bets_insert: bloqueia INSERT após prazo, admin sempre passa ───────────────
 
@@ -63,7 +66,7 @@ create policy "bets_insert" on public.bets for insert
       --     OU deadline no futuro OU match_id desconhecido (fail-open)
       not exists (
         select 1 from public.phase_settings ps
-        where ps.stage = public.match_id_to_stage(new.match_id)
+        where ps.stage = public.match_id_to_stage(match_id)
           and ps.bets_deadline is not null
           and now() > ps.bets_deadline
       )
