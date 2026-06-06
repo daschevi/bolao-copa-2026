@@ -20,7 +20,7 @@ function BettingProgress({
   deadlinePassed: boolean;
 }) {
   const pct = total > 0 ? Math.round((made / total) * 100) : 0;
-  const done = made === total;
+  const done = total > 0 && made === total;
 
   return (
     <div
