@@ -45,7 +45,7 @@ function BettingProgress({
           className="h-full rounded-full transition-all duration-500"
           style={{
             width: `${pct}%`,
-            background: done ? '#22c55e' : deadlinePassed ? '#374151' : '#8300ff',
+            background: deadlinePassed ? '#374151' : '#8300ff',
           }}
         />
       </div>
