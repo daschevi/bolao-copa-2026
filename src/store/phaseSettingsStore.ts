@@ -68,10 +68,22 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
         if (!isSupabaseConfigured) return { error: null };
 
         const { phases } = get();
+        // Normaliza `betsDeadline` para ISO BRT antes de enviar.
+        // O input do admin (`<input type="datetime-local">`) produz
+        // `'YYYY-MM-DDTHH:mm'` sem timezone — se enviarmos cru pra coluna
+        // `timestamptz`, o Postgres interpreta como UTC e o admin que pensava
+        // em 14:30 BRT acaba armazenando 14:30 UTC (= 11:30 BRT). Adicionando
+        // `:00-03:00` explicitamos o fuso e o BD armazena o instante correto.
+        const toIsoBrt = (s: string | null): string | null => {
+          if (!s) return null;
+          // Já tem timezone (caso a tela seja alimentada por ISO completo): mantém.
+          if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return s;
+          return `${s.slice(0, 16)}:00-03:00`;
+        };
         const rows = STAGE_KEYS.map(stage => ({
           stage,
           visible:       phases[stage].visible,
-          bets_deadline: phases[stage].betsDeadline ?? null,
+          bets_deadline: toIsoBrt(phases[stage].betsDeadline),
           updated_at:    new Date().toISOString(),
         }));
 

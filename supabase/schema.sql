@@ -74,8 +74,35 @@ create policy "profiles_update" on public.profiles
 -- Sem policy de DELETE intencional — palpite feito não pode ser cancelado.
 -- Se cancelamento for necessário no futuro, adicionar policy aqui.
 create policy "bets_select" on public.bets for select using (auth.uid() is not null);
-create policy "bets_insert" on public.bets for insert with check (auth.uid() = user_id);
-create policy "bets_update" on public.bets for update using (auth.uid() = user_id);
+-- INSERT e UPDATE verificam autoria + prazo da fase via match_id_to_stage().
+-- Admin bypassa o prazo. Fase sem deadline → fail-open (libera).
+-- Ver migration 004 para a função match_id_to_stage e a lógica completa.
+create policy "bets_insert" on public.bets for insert
+  with check (
+    auth.uid() = user_id
+    and (
+      exists (select 1 from public.profiles where id = auth.uid() and is_admin = true)
+      or not exists (
+        select 1 from public.phase_settings ps
+        where ps.stage = public.match_id_to_stage(new.match_id)
+          and ps.bets_deadline is not null
+          and now() > ps.bets_deadline
+      )
+    )
+  );
+create policy "bets_update" on public.bets for update
+  using (
+    auth.uid() = user_id
+    and (
+      exists (select 1 from public.profiles where id = auth.uid() and is_admin = true)
+      or not exists (
+        select 1 from public.phase_settings ps
+        where ps.stage = public.match_id_to_stage(match_id)
+          and ps.bets_deadline is not null
+          and now() > ps.bets_deadline
+      )
+    )
+  );
 
 -- Match results: apenas usuários autenticados podem ler.
 create policy "results_select" on public.match_results for select using (auth.uid() is not null);

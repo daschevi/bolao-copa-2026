@@ -168,7 +168,7 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export function Groups() {
-  usePageSync();
+  usePageSync({ phases: true });
 
   const { matches } = useTournamentStore();
   const { profile } = useAuthStore();

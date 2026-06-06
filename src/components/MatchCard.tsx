@@ -21,13 +21,39 @@ const STAGE_LABEL: Record<string, string> = {
 const BET_DEADLINE_DAYS = 3;
 
 /**
+ * Converte o `betsDeadline` em `Date`, aceitando dois formatos:
+ *
+ * 1. Formato curto (`'YYYY-MM-DDTHH:mm'`) — o que o `<input type="datetime-local">`
+ *    do admin produz. Interpretamos como horário de Brasília (BRT, -03:00).
+ *
+ * 2. Formato ISO completo (`'2026-06-20T14:30:00+00:00'`) — o que volta do
+ *    Supabase quando a coluna é `timestamptz`. Usamos como está.
+ *
+ * Sem essa normalização, concatenar `':00-03:00'` numa string que JÁ tem
+ * timezone gera `'…+00:00:00-03:00'` que vira `Invalid Date` — e o
+ * comparador `new Date() <= NaN` sempre retorna false, bloqueando palpites
+ * mesmo dentro do prazo (manifesta-se após logout/login quando o cache
+ * limpo sincroniza do BD com o formato ISO completo).
+ */
+function parseDeadline(s: string): Date | null {
+  if (!s) return null;
+  // ISO completo tem timezone explícito no final (Z, +HH:mm ou -HH:mm).
+  const hasTimezone = /Z$|[+-]\d{2}:?\d{2}$/.test(s);
+  const iso = hasTimezone ? s : `${s.slice(0, 16)}:00-03:00`;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Retorna true se o prazo de palpite ainda está aberto.
  * Se a fase tiver prazo fixo (phaseDeadline), usa ele; caso contrário usa 3 dias antes do jogo.
  */
 function isBetOpen(match: Match, phaseDeadline: string | null): boolean {
   if (phaseDeadline !== null) {
     if (!phaseDeadline) return false; // string vazia = encerrado
-    const deadline = new Date(`${phaseDeadline}:00-03:00`); // interpreta como BRT
+    const deadline = parseDeadline(phaseDeadline);
+    // Se o valor não é legível, prefere fail-open para não bloquear injustamente.
+    if (!deadline) return true;
     return new Date() <= deadline;
   }
   if (!match.date) return true;
@@ -39,11 +65,12 @@ function isBetOpen(match: Match, phaseDeadline: string | null): boolean {
 
 /** Formata quantos dias/horas faltam para o prazo de palpite. */
 function deadlineLabel(match: Match, phaseDeadline: string | null): string {
-  let deadlineDate: Date;
+  let deadlineDate: Date | null;
 
   if (phaseDeadline !== null) {
     if (!phaseDeadline) return 'Palpites encerrados';
-    deadlineDate = new Date(`${phaseDeadline}:00-03:00`);
+    deadlineDate = parseDeadline(phaseDeadline);
+    if (!deadlineDate) return ''; // ilegível: não mostra contador
   } else {
     if (!match.date) return '';
     const time = match.time ?? '00:00';
@@ -99,12 +126,22 @@ export function MatchCard({ match, showBet = true }: Props) {
   const teamsReady  = match.stage === 'group' || (!!match.homeTeamId && !!match.awayTeamId);
   const canBet      = isAdmin || (!isPlayed && betOpen && teamsReady && phaseVisible);
 
+  const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
+
   const stageInfo = match.stage === 'group'
     ? `Grupo ${match.group} · Rodada ${match.matchDay}`
     : STAGE_LABEL[match.stage] ?? match.stage;
 
   const handleSaveBet = () => {
-    if (!profile || !canBet) return;
+    if (!profile) return;
+    // Re-lê o store no momento exato do clique — evita usar canBet stale da closure.
+    // O `canBet` da renderização captura `new Date()` uma única vez; se o prazo
+    // expirar enquanto a aba fica aberta, a closure não é atualizada até o próximo
+    // re-render. Ler direto de getState() garante o valor atual sem re-render.
+    const liveAdmin    = useAuthStore.getState().profile?.isAdmin ?? false;
+    const liveDeadline = usePhaseSettingsStore.getState().phases[match.stage as StageKey]?.betsDeadline ?? null;
+    if (!liveAdmin && !isBetOpen(match, liveDeadline)) return; // prazo expirou
+    if (!canBet) return;
     // checkConnection() é 100% síncrono — compara Date.now() com sessionExpiresAt.
     // Zero latência, zero mutex, nunca bloqueia a UI.
     if (!checkConnection()) return;
@@ -131,6 +168,10 @@ export function MatchCard({ match, showBet = true }: Props) {
   };
 
   const openModal = () => {
+    // Dispara sync assíncrono do prazo sem bloquear a abertura do modal.
+    // Se o servidor retornar antes do usuário clicar em "Salvar", garante prazo fresco.
+    // Combinado com o re-check em handleSaveBet, cobre o gap de cache desatualizado.
+    syncPhaseSettings();
     setBetHome(userBet?.homeScore?.toString() ?? '');
     setBetAway(userBet?.awayScore?.toString() ?? '');
     setResHome(match.homeScore?.toString() ?? '');
