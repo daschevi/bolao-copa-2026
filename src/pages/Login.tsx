@@ -41,9 +41,26 @@ export function Login() {
       <div className="relative w-full max-w-sm flex flex-col items-center">
         {/* Hero */}
         <div className="text-center mb-10">
-          <p className="text-xs font-bold tracking-[0.35em] text-copa-green uppercase mb-4">
-            golfleet · 2026
-          </p>
+
+          {/* Logo Golfleet com backdrop semi-transparente */}
+          <div className="flex justify-center mb-6">
+            <div
+              className="rounded-2xl p-4 flex items-center justify-center"
+              style={{
+                background: 'rgba(131, 0, 255, 0.08)',
+                border: '1px solid rgba(131, 0, 255, 0.15)',
+                backdropFilter: 'blur(12px)',
+              }}
+            >
+              <img
+                src="https://azmlwmrfskqfgdfsccxf.supabase.co/storage/v1/object/public/images/G-degrade.png"
+                alt="Golfleet"
+                className="h-16 w-auto object-contain"
+                style={{ filter: 'drop-shadow(0 0 16px rgba(131, 0, 255, 0.5))' }}
+              />
+            </div>
+          </div>
+
           <h1
             className="text-6xl font-black uppercase text-white leading-none tracking-tight mb-1"
             style={{ fontStyle: 'italic', textShadow: '0 0 50px #8300ff2A' }}
