@@ -112,7 +112,6 @@ export function MatchCard({ match, showBet = true }: Props) {
   const [resAway, setResAway] = useState('');
   const [penHome, setPenHome] = useState('');
   const [penAway, setPenAway] = useState('');
-  const [tab, setTab] = useState<'bet' | 'result'>('bet');
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
   const homeTeam = match.homeTeamId ? TEAMS_BY_ID[match.homeTeamId] : null;
@@ -127,7 +126,8 @@ export function MatchCard({ match, showBet = true }: Props) {
   const phaseVisible = isAdmin || (phaseConfig?.visible ?? true);
   // Para fases eliminatórias, times precisam estar definidos para liberar palpite
   const teamsReady  = match.stage === 'group' || (!!match.homeTeamId && !!match.awayTeamId);
-  const canBet      = isAdmin || (!isPlayed && betOpen && teamsReady && phaseVisible);
+  // Admin não participa do bolão — apenas define resultados oficiais.
+  const canBet      = !isAdmin && (!isPlayed && betOpen && teamsReady && phaseVisible);
 
   const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
@@ -141,9 +141,8 @@ export function MatchCard({ match, showBet = true }: Props) {
     // O `canBet` da renderização captura `new Date()` uma única vez; se o prazo
     // expirar enquanto a aba fica aberta, a closure não é atualizada até o próximo
     // re-render. Ler direto de getState() garante o valor atual sem re-render.
-    const liveAdmin    = useAuthStore.getState().profile?.isAdmin ?? false;
     const liveDeadline = usePhaseSettingsStore.getState().phases[match.stage as StageKey]?.betsDeadline ?? null;
-    if (!liveAdmin && !isBetOpen(match, liveDeadline)) return; // prazo expirou
+    if (!isBetOpen(match, liveDeadline)) return; // prazo expirou
     if (!canBet) return;
     // checkConnection() é 100% síncrono — compara Date.now() com sessionExpiresAt.
     // Zero latência, zero mutex, nunca bloqueia a UI.
@@ -179,7 +178,6 @@ export function MatchCard({ match, showBet = true }: Props) {
     setBetAway(userBet?.awayScore?.toString() ?? '');
     setResHome(match.homeScore?.toString() ?? '');
     setResAway(match.awayScore?.toString() ?? '');
-    setTab('bet');
     setOpen(true);
   };
 
@@ -264,45 +262,53 @@ export function MatchCard({ match, showBet = true }: Props) {
           </div>
         </div>
 
-        {/* Rodapé: palpite / status */}
+        {/* Rodapé: indicador de árbitro (admin) ou palpite/status (usuário) */}
         <div className="text-center mt-2 min-h-[24px]">
-          {showBet && !teamsReady && !isPlayed ? (
-            <div className="text-xs" style={{ color: '#4B5563' }}>Times a definir</div>
-          ) : showBet && userBet ? (
+          {isAdmin ? (
+            /* Admin: mostra ação disponível — nunca exibe palpites */
+            !isPlayed
+              ? <div className="text-xs" style={{ color: '#4B5563' }}>⚙ Definir resultado</div>
+              : null
+          ) : (
+            /* Usuário comum: exibe palpite, status ou convite */
             <>
-              <div className={`text-sm font-bold px-2 py-1 rounded-lg inline-block ${
-                betPoints === 3 ? 'bg-green-900/40 text-green-400' :
-                betPoints === 1 ? 'bg-yellow-900/40 text-yellow-400' :
-                betPoints === 0 ? 'bg-red-900/40 text-red-400' :
-                'bg-copa-green/10 text-copa-green'
-              }`}>
-                Palpite: {userBet.homeScore} × {userBet.awayScore}
-                {betPoints !== null && <span className="ml-1 opacity-80">· +{betPoints} pt</span>}
-              </div>
-              {/* Indicador de sync pendente: palpite está salvo localmente
-                  mas ainda não confirmado pelo servidor (em retry via outbox).
-                  Some sozinho quando o onSuccess do persistOp confirmar a escrita. */}
-              {userBet.pendingPersist && (
-                <div className="text-[10px] mt-0.5 animate-pulse" style={{ color: '#9CA3AF' }}>
-                  ⟳ sincronizando…
+              {showBet && !teamsReady && !isPlayed ? (
+                <div className="text-xs" style={{ color: '#4B5563' }}>Times a definir</div>
+              ) : showBet && userBet ? (
+                <>
+                  <div className={`text-sm font-bold px-2 py-1 rounded-lg inline-block ${
+                    betPoints === 3 ? 'bg-green-900/40 text-green-400' :
+                    betPoints === 1 ? 'bg-yellow-900/40 text-yellow-400' :
+                    betPoints === 0 ? 'bg-red-900/40 text-red-400' :
+                    'bg-copa-green/10 text-copa-green'
+                  }`}>
+                    Palpite: {userBet.homeScore} × {userBet.awayScore}
+                    {betPoints !== null && <span className="ml-1 opacity-80">· +{betPoints} pt</span>}
+                  </div>
+                  {/* Indicador de sync pendente: some quando o servidor confirma */}
+                  {userBet.pendingPersist && (
+                    <div className="text-[10px] mt-0.5 animate-pulse" style={{ color: '#9CA3AF' }}>
+                      ⟳ sincronizando…
+                    </div>
+                  )}
+                </>
+              ) : showBet && profile && !isPlayed ? (
+                betOpen ? (
+                  <div className="text-xs text-gray-600">Clique para palpitar</div>
+                ) : (
+                  <div className="text-xs font-medium" style={{ color: '#EF4444' }}>
+                    🔒 Palpites encerrados
+                  </div>
+                )
+              ) : null}
+
+              {/* Contador regressivo para o prazo */}
+              {showBet && !userBet && !isPlayed && betOpen && profile && teamsReady && (
+                <div className="text-xs mt-0.5" style={{ color: '#4B5563' }}>
+                  ⏱ {deadlineLabel(match, phaseDeadline)}
                 </div>
               )}
             </>
-          ) : showBet && profile && !isPlayed ? (
-            betOpen ? (
-              <div className="text-xs text-gray-600">Clique para palpitar</div>
-            ) : (
-              <div className="text-xs font-medium" style={{ color: '#EF4444' }}>
-                🔒 Palpites encerrados
-              </div>
-            )
-          ) : null}
-
-          {/* Contador regressivo para o prazo (quando ainda aberto e sem palpite) */}
-          {showBet && !userBet && !isPlayed && betOpen && profile && !isAdmin && teamsReady && (
-            <div className="text-xs mt-0.5" style={{ color: '#4B5563' }}>
-              ⏱ {deadlineLabel(match, phaseDeadline)}
-            </div>
           )}
         </div>
       </button>
@@ -347,38 +353,17 @@ export function MatchCard({ match, showBet = true }: Props) {
               </div>
             </div>
 
-            {/* Tabs: só admin vê as duas abas */}
+            {/* Admin: label de contexto em vez de tabs — só define resultado */}
             {isAdmin && (
-              <div
-                className="flex mb-4 rounded-xl overflow-hidden"
-                style={{ border: '1px solid #2A2A2A' }}
-              >
-                <button
-                  onClick={() => setTab('bet')}
-                  className="flex-1 py-2 text-sm font-semibold transition-all"
-                  style={{
-                    background: tab === 'bet' ? '#22C55E' : 'transparent',
-                    color: tab === 'bet' ? '#000' : '#6B7280',
-                  }}
-                >
-                  Meu Palpite
-                </button>
-                <button
-                  onClick={() => setTab('result')}
-                  className="flex-1 py-2 text-sm font-semibold transition-all"
-                  style={{
-                    background: tab === 'result' ? '#EF4444' : 'transparent',
-                    color: tab === 'result' ? '#fff' : '#6B7280',
-                    borderLeft: '1px solid #2A2A2A',
-                  }}
-                >
-                  Resultado Oficial
-                </button>
+              <div className="mb-3">
+                <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                  Resultado oficial
+                </p>
               </div>
             )}
 
-            {/* ── Aba: Palpite ── */}
-            {(tab === 'bet' || !isAdmin) && profile && (
+            {/* ── Seção: Palpite (somente usuário comum) ── */}
+            {!isAdmin && profile && (
               <>
                 {canBet ? (
                   <div>
@@ -444,8 +429,8 @@ export function MatchCard({ match, showBet = true }: Props) {
               </>
             )}
 
-            {/* ── Aba: Resultado oficial (somente admin) ── */}
-            {tab === 'result' && isAdmin && (
+            {/* ── Seção: Resultado oficial (somente admin) ── */}
+            {isAdmin && (
               <div>
                 <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider font-semibold">Resultado oficial</p>
                 <div className="flex items-center gap-3 justify-center mb-2">
