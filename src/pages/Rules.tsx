@@ -26,7 +26,7 @@ export function Rules() {
         <div className="space-y-3">
           <ScoreRow
             badge="3 pts"
-            badgeColor="#22C55E"
+            badgeColor="#8300ff"
             title="Placar exato"
             description="Acertou o número de gols de ambos os times (ex: palpitou 2×1 e foi 2×1)"
           />
@@ -95,7 +95,7 @@ export function Rules() {
             <li key={i} className="flex items-start gap-3">
               <span
                 className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black"
-                style={{ background: '#22C55E20', color: '#22C55E', border: '1px solid #22C55E40' }}
+                style={{ background: '#8300ff20', color: '#8300ff', border: '1px solid #8300ff40' }}
               >
                 {i + 1}
               </span>
@@ -149,7 +149,7 @@ function ExampleRow({
   bet: string;
   points: number;
 }) {
-  const color = points === 3 ? '#22C55E' : points === 1 ? '#FACC15' : '#6B7280';
+  const color = points === 3 ? '#8300ff' : points === 1 ? '#FACC15' : '#6B7280';
   return (
     <div className="flex items-center gap-1.5 text-[10px] whitespace-nowrap">
       <span className="text-gray-500 shrink-0">Res:</span>

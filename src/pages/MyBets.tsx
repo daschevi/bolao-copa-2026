@@ -46,8 +46,8 @@ export function MyBets() {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
-          { label: 'Pontos', value: stats.total, color: 'text-copa-gold' },
-          { label: 'Placar Exato', value: stats.exact, color: 'text-green-400' },
+          { label: 'Pontos', value: stats.total, color: 'text-copa-green' },
+          { label: 'Placar Exato', value: stats.exact, color: 'text-copa-gold' },
           { label: 'Acertos', value: stats.correct, color: 'text-yellow-400' },
         ].map(s => (
           <div key={s.label} className="card text-center">
@@ -70,7 +70,7 @@ export function MyBets() {
               const homeTeam = m.homeTeamId ? TEAMS_BY_ID[m.homeTeamId] : null;
               const awayTeam = m.awayTeamId ? TEAMS_BY_ID[m.awayTeamId] : null;
               const pts = calcPoints(b, m);
-              const ptsColor = pts === 3 ? 'text-green-400 bg-green-900/30' : pts === 1 ? 'text-yellow-400 bg-yellow-900/30' : 'text-red-400 bg-red-900/30';
+              const ptsColor = pts === 3 ? 'text-purple-400 bg-purple-900/30' : pts === 1 ? 'text-yellow-400 bg-yellow-900/30' : 'text-red-400 bg-red-900/30';
               return (
                 <div key={b.matchId} className="card flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -110,7 +110,7 @@ export function MyBets() {
                     <span className="text-xs text-gray-300 truncate">{awayTeam?.name ?? 'TBD'}</span>
                     {awayTeam && <Flag code={awayTeam.code} name={awayTeam.name} size="sm" />}
                   </div>
-                  <div className="text-sm font-medium text-copa-gold shrink-0 whitespace-nowrap">{b.homeScore}×{b.awayScore}</div>
+                  <div className="text-sm font-medium text-copa-green shrink-0 whitespace-nowrap">{b.homeScore}×{b.awayScore}</div>
                 </div>
               );
             })}

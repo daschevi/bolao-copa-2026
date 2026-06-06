@@ -22,7 +22,7 @@ type EntityFilter = 'all' | 'bet' | 'match_result' | 'phase_settings' | 'session
 // ── Configuração visual de ações ──────────────────────────────────────────────
 
 const ACTION_CFG: Record<string, { label: string; color: string; bg: string }> = {
-  bet_created:    { label: 'Palpite',         color: '#22C55E', bg: '#22C55E20' },
+  bet_created:    { label: 'Palpite',         color: '#8300ff', bg: '#8300ff20' },
   bet_updated:    { label: 'Palpite editado', color: '#EAB308', bg: '#EAB30820' },
   result_set:     { label: 'Resultado',       color: '#3B82F6', bg: '#3B82F620' },
   result_updated: { label: 'Res. corrigido',  color: '#F97316', bg: '#F9731620' },
@@ -167,9 +167,9 @@ export function AuditLog() {
           disabled={loading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
           style={{
-            background: '#22C55E15',
-            border: '1px solid #22C55E40',
-            color: loading ? '#4B5563' : '#22C55E',
+            background: '#8300ff15',
+            border: '1px solid #8300ff40',
+            color: loading ? '#4B5563' : '#8300ff',
           }}
         >
           {loading ? '⟳ Carregando…' : '↺ Atualizar'}
@@ -184,10 +184,10 @@ export function AuditLog() {
             onClick={() => { setFilter(tab.key); setLimit(200); }}
             className="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
             style={{
-              background: filter === tab.key ? '#22C55E20' : 'transparent',
+              background: filter === tab.key ? '#8300ff20' : 'transparent',
               border: '1px solid',
-              borderColor: filter === tab.key ? '#22C55E60' : '#2A2A2A',
-              color: filter === tab.key ? '#22C55E' : '#6B7280',
+              borderColor: filter === tab.key ? '#8300ff60' : '#2A2A2A',
+              color: filter === tab.key ? '#8300ff' : '#6B7280',
             }}
           >
             {tab.label}

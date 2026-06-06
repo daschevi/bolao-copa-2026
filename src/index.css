@@ -12,15 +12,15 @@
 }
 
 @layer components {
-  /* Botão primário — verde esportivo */
+  /* Botão primário — roxo Golfleet */
   .btn-primary {
-    @apply font-bold py-2 px-4 rounded-lg transition-all text-black tracking-wide;
-    background: #22C55E;
+    @apply font-bold py-2 px-4 rounded-lg transition-all text-white tracking-wide;
+    background: #8300ff;
   }
   .btn-primary:hover:not(:disabled) {
-    background: #16A34A;
+    background: #6600cc;
     transform: translateY(-1px);
-    box-shadow: 0 4px 20px #22C55E44;
+    box-shadow: 0 4px 20px #8300ff44;
   }
   .btn-primary:disabled {
     opacity: 0.5;
@@ -41,12 +41,12 @@
     box-shadow: 0 2px 12px #00000060;
   }
 
-  /* Card com acento verde no topo */
+  /* Card com acento roxo no topo */
   .card-accent {
     @apply rounded-xl p-4;
     background: #111111;
     border: 1px solid #1F1F1F;
-    border-top: 2px solid #22C55E;
+    border-top: 2px solid #8300ff;
     box-shadow: 0 2px 12px #00000060;
   }
 
@@ -57,8 +57,8 @@
     border-color: #2A2A2A;
   }
   .input:focus {
-    border-color: #22C55E;
-    box-shadow: 0 0 0 2px #22C55E22;
+    border-color: #8300ff;
+    box-shadow: 0 0 0 2px #8300ff22;
   }
 
   .score-input {
@@ -67,12 +67,12 @@
     border: 1px solid #2A2A2A;
   }
   .score-input:focus {
-    border-color: #22C55E;
-    box-shadow: 0 0 0 2px #22C55E22;
+    border-color: #8300ff;
+    box-shadow: 0 0 0 2px #8300ff22;
   }
 
-  /* Texto com glow verde */
+  /* Texto com glow roxo */
   .green-glow {
-    text-shadow: 0 0 20px #22C55E88;
+    text-shadow: 0 0 20px #8300ff88;
   }
 }

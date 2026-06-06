@@ -146,12 +146,12 @@ function PhaseRow({
         <span className="font-semibold text-sm text-white">{label}</span>
 
         <label className="flex items-center gap-2 cursor-pointer select-none">
-          <span className="text-xs" style={{ color: config.visible ? '#22C55E' : '#6B7280' }}>
+          <span className="text-xs" style={{ color: config.visible ? '#8300ff' : '#6B7280' }}>
             {config.visible ? 'Visível' : 'Oculta'}
           </span>
           <div
             className="relative w-10 h-6 rounded-full transition-colors cursor-pointer"
-            style={{ background: config.visible ? '#22C55E' : '#374151' }}
+            style={{ background: config.visible ? '#8300ff' : '#374151' }}
             onClick={() => onChange({ visible: !config.visible })}
           >
             <div

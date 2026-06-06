@@ -3,10 +3,67 @@ import { MatchCard } from '../components/MatchCard';
 import { Flag } from '../components/Flag';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useAuthStore } from '../store/authStore';
+import { useBetsStore } from '../store/betsStore';
 import { usePhaseSettingsStore } from '../store/phaseSettingsStore';
 import { usePageSync } from '../hooks/usePageSync';
 import { GROUPS, TEAMS_BY_ID } from '../data/teams';
 import type { Match } from '../types';
+
+// ─── Barra de progresso de palpites ──────────────────────────────────────────
+function BettingProgress({
+  made,
+  total,
+  deadlinePassed,
+}: {
+  made: number;
+  total: number;
+  deadlinePassed: boolean;
+}) {
+  const pct = total > 0 ? Math.round((made / total) * 100) : 0;
+  const done = made === total;
+
+  return (
+    <div
+      className="mb-4 rounded-xl px-4 py-3"
+      style={{ background: '#111111', border: '1px solid #1F1F1F' }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+          ⚽ Palpites · Fase de Grupos
+        </span>
+        <span
+          className="text-xs font-bold tabular-nums"
+          style={{ color: deadlinePassed ? '#4B5563' : '#8300ff' }}
+        >
+          {made} / {total}
+        </span>
+      </div>
+
+      {/* Barra */}
+      <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: '#1F2937' }}>
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{
+            width: `${pct}%`,
+            background: done ? '#22c55e' : deadlinePassed ? '#374151' : '#8300ff',
+          }}
+        />
+      </div>
+
+      {/* Legenda */}
+      <div className="flex items-center justify-between mt-1.5">
+        <span className="text-[10px]" style={{ color: '#4B5563' }}>
+          {done
+            ? '✓ Todos os palpites enviados!'
+            : deadlinePassed
+            ? '🔒 Prazo encerrado'
+            : `${total - made} restante${total - made !== 1 ? 's' : ''}`}
+        </span>
+        <span className="text-[10px]" style={{ color: '#4B5563' }}>{pct}%</span>
+      </div>
+    </div>
+  );
+}
 
 // ─── Navegador de rodadas ────────────────────────────────────────────────────
 function RoundNavigator({
@@ -27,7 +84,7 @@ function RoundNavigator({
         onClick={() => setActiveRound(r => Math.max(1, r - 1))}
         disabled={activeRound === 1}
         className="w-8 h-8 flex items-center justify-center rounded-lg text-lg font-bold transition-all disabled:opacity-20"
-        style={{ color: '#22C55E', border: '1px solid #22C55E40', background: '#22C55E10' }}
+        style={{ color: '#8300ff', border: '1px solid #8300ff40', background: '#8300ff10' }}
       >
         ‹
       </button>
@@ -41,7 +98,7 @@ function RoundNavigator({
               key={r}
               onClick={() => setActiveRound(r)}
               className="w-1.5 h-1.5 rounded-full transition-all"
-              style={{ background: r === activeRound ? '#22C55E' : '#374151' }}
+              style={{ background: r === activeRound ? '#8300ff' : '#374151' }}
             />
           ))}
         </div>
@@ -50,7 +107,7 @@ function RoundNavigator({
         onClick={() => setActiveRound(r => Math.min(3, r + 1))}
         disabled={activeRound === 3}
         className="w-8 h-8 flex items-center justify-center rounded-lg text-lg font-bold transition-all disabled:opacity-20"
-        style={{ color: '#22C55E', border: '1px solid #22C55E40', background: '#22C55E10' }}
+        style={{ color: '#8300ff', border: '1px solid #8300ff40', background: '#8300ff10' }}
       >
         ›
       </button>
@@ -84,7 +141,7 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
               <tr style={{ borderBottom: '1px solid #222' }}>
                 <th className="text-left pb-2 pr-1 w-5 text-white font-semibold">#</th>
                 <th className="text-left pb-2 text-white font-semibold uppercase tracking-wide text-[10px]">Seleção</th>
-                <th className="pb-2 w-11 px-2 text-center font-black uppercase tracking-wide text-[10px]" style={{ color: '#22C55E' }}>P</th>
+                <th className="pb-2 w-11 px-2 text-center font-black uppercase tracking-wide text-[10px]" style={{ color: '#8300ff' }}>P</th>
                 <th className="pb-2 w-9 px-2 text-center text-white font-semibold uppercase tracking-wide text-[10px]">J</th>
                 <th className="pb-2 w-9 px-2 text-center text-white font-semibold uppercase tracking-wide text-[10px]">V</th>
                 <th className="pb-2 w-9 px-2 text-center text-white font-semibold uppercase tracking-wide text-[10px]">E</th>
@@ -99,7 +156,7 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
               {standings.map((s, i) => {
                 const team = TEAMS_BY_ID[s.teamId];
                 const pct = s.played > 0 ? Math.round((s.points / (s.played * 3)) * 100) : 0;
-                const sgColor = s.goalDifference > 0 ? '#22C55E' : s.goalDifference < 0 ? '#EF4444' : '#FFFFFF';
+                const sgColor = s.goalDifference > 0 ? '#8300ff' : s.goalDifference < 0 ? '#EF4444' : '#FFFFFF';
                 return (
                   <tr
                     key={s.teamId}
@@ -113,13 +170,13 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span
                           className="w-1.5 h-1.5 rounded-full shrink-0"
-                          style={{ background: i < 2 ? '#22C55E' : i === 2 ? '#EAB308' : 'transparent', border: i >= 3 ? '1px solid #374151' : 'none' }}
+                          style={{ background: i < 2 ? '#8300ff' : i === 2 ? '#EAB308' : 'transparent', border: i >= 3 ? '1px solid #374151' : 'none' }}
                         />
                         {team && <Flag code={team.code} name={team.name} size="sm" />}
                         <span className="text-white truncate min-w-0 font-medium" title={team?.name}>{team?.name}</span>
                       </div>
                     </td>
-                    <td className="text-center py-2 px-2 font-black text-base" style={{ color: '#22C55E' }}>{s.points}</td>
+                    <td className="text-center py-2 px-2 font-black text-base" style={{ color: '#8300ff' }}>{s.points}</td>
                     <td className="text-center py-2 px-2 text-white">{s.played}</td>
                     <td className="text-center py-2 px-2 text-white">{s.won}</td>
                     <td className="text-center py-2 px-2 text-white">{s.drawn}</td>
@@ -139,7 +196,7 @@ function GroupRow({ group, matches }: { group: string; matches: Match[] }) {
           {/* Legenda */}
           <div className="flex gap-4 mt-3 pt-2.5" style={{ borderTop: '1px solid #1A1A1A' }}>
             <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: '#4B5563' }}>
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: '#22C55E' }} /> Classificado
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: '#8300ff' }} /> Classificado
             </span>
             <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: '#4B5563' }}>
               <span className="w-2 h-2 rounded-full shrink-0" style={{ background: '#EAB308' }} /> Possível 3º
@@ -172,6 +229,7 @@ export function Groups() {
 
   const { matches } = useTournamentStore();
   const { profile } = useAuthStore();
+  const bets = useBetsStore(s => s.bets);
   const isAdmin = profile?.isAdmin ?? false;
   const groupPhase = usePhaseSettingsStore(s => s.phases.group);
   const phaseVisible = isAdmin || groupPhase.visible;
@@ -179,10 +237,22 @@ export function Groups() {
   const [activeRowGroupIdx, setActiveRowGroupIdx] = useState(0);
 
   // `visibleGroups` é GROUPS direto — a memoização preserva referência estável
-  // para usar como dep estável caso seja preciso no futuro. Não há "reset por
-  // mudança de visibilidade" porque a lista é constante; se voltar a variar,
-  // adicionar useEffect aqui requer cuidado (não chamar setState síncrono).
   const visibleGroups = useMemo(() => GROUPS, []);
+
+  // Progresso de palpites na fase de grupos (reativo ao bets store)
+  const { totalGroupMatches, userGroupBets, deadlinePassed } = useMemo(() => {
+    const groupMatchIds = Object.values(matches)
+      .filter(m => m.stage === 'group')
+      .map(m => m.id);
+    const total = groupMatchIds.length;
+    const made = profile
+      ? groupMatchIds.filter(id => bets[`${profile.id}-${id}`] !== undefined).length
+      : 0;
+    const passed = groupPhase.betsDeadline
+      ? new Date() > new Date(groupPhase.betsDeadline)
+      : false;
+    return { totalGroupMatches: total, userGroupBets: made, deadlinePassed: passed };
+  }, [matches, bets, profile, groupPhase.betsDeadline]);
 
   // Fase oculta para não-admins
   if (!phaseVisible) {
@@ -201,13 +271,21 @@ export function Groups() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
+
+      {/* Barra de progresso de palpites — visível para todos os usuários logados */}
+      <BettingProgress
+        made={userGroupBets}
+        total={totalGroupMatches}
+        deadlinePassed={deadlinePassed}
+      />
+
       {/* Navegação entre grupos */}
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => setActiveRowGroupIdx(i => Math.max(0, i - 1))}
           disabled={activeRowGroupIdx === 0}
           className="w-9 h-9 flex items-center justify-center rounded-lg text-lg font-bold transition-all disabled:opacity-20"
-          style={{ color: '#22C55E', border: '1px solid #22C55E40', background: '#22C55E10' }}
+          style={{ color: '#8300ff', border: '1px solid #8300ff40', background: '#8300ff10' }}
         >
           ‹
         </button>
@@ -223,7 +301,7 @@ export function Groups() {
           onClick={() => setActiveRowGroupIdx(i => Math.min(visibleGroups.length - 1, i + 1))}
           disabled={activeRowGroupIdx === visibleGroups.length - 1}
           className="w-9 h-9 flex items-center justify-center rounded-lg text-lg font-bold transition-all disabled:opacity-20"
-          style={{ color: '#22C55E', border: '1px solid #22C55E40', background: '#22C55E10' }}
+          style={{ color: '#8300ff', border: '1px solid #8300ff40', background: '#8300ff10' }}
         >
           ›
         </button>

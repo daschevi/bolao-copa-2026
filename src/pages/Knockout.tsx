@@ -95,7 +95,7 @@ export function Knockout() {
           <button
             key={s.id}
             onClick={() => setActiveStage(s.id)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${effectiveStage === s.id ? 'bg-copa-green text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${effectiveStage === s.id ? 'bg-copa-green text-white' : 'bg-slate-800 text-gray-400 hover:text-copa-green'}`}
           >
             {s.label}
             {isAdmin && phases[s.id as StageKey]?.visible === false && (
@@ -113,7 +113,7 @@ export function Knockout() {
             {isAdmin && (
               <button
                 onClick={() => { setEditMatch(m.id); setSelectedHome(m.homeTeamId ?? ''); setSelectedAway(m.awayTeamId ?? ''); }}
-                className="text-xs text-gray-600 hover:text-copa-green transition-colors w-full text-center py-0.5"
+                className="text-xs text-gray-600 hover:text-copa-green transition-colors w-full text-center py-0.5 hover:text-copa-green"
               >
                 ✎ ajustar times
               </button>

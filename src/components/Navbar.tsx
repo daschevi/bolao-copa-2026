@@ -92,9 +92,9 @@ export function Navbar() {
                     to={l.to}
                     className="px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all"
                     style={{
-                      color: active ? '#22C55E' : '#6B7280',
-                      background: active ? '#22C55E15' : 'transparent',
-                      borderBottom: active ? '2px solid #22C55E' : '2px solid transparent',
+                      color: active ? '#8300ff' : '#6B7280',
+                      background: active ? '#8300ff15' : 'transparent',
+                      borderBottom: active ? '2px solid #8300ff' : '2px solid transparent',
                     }}
                   >
                     {l.label}
@@ -114,10 +114,10 @@ export function Navbar() {
                     onClick={() => setDropdownOpen(o => !o)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
                     style={{
-                      color: dropdownOpen ? '#22C55E' : '#6B7280',
+                      color: dropdownOpen ? '#8300ff' : '#6B7280',
                       border: '1px solid',
-                      borderColor: dropdownOpen ? '#22C55E40' : '#1F1F1F',
-                      background: dropdownOpen ? '#22C55E10' : 'transparent',
+                      borderColor: dropdownOpen ? '#8300ff40' : '#1F1F1F',
+                      background: dropdownOpen ? '#8300ff10' : 'transparent',
                     }}
                   >
                     {profile.isAdmin && <span className="text-copa-green text-xs">★</span>}
@@ -142,8 +142,8 @@ export function Navbar() {
                           <button
                             onClick={() => { setDropdownOpen(false); setPhaseModal(true); }}
                             className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium transition-all text-left"
-                            style={{ color: '#22C55E' }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#22C55E10'; }}
+                            style={{ color: '#8300ff' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#8300ff10'; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                           >
                             <span>⚙️</span>
@@ -153,8 +153,8 @@ export function Navbar() {
                             to="/auditoria"
                             onClick={() => setDropdownOpen(false)}
                             className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium transition-all"
-                            style={{ color: '#22C55E', borderTop: '1px solid #1F1F1F' }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#22C55E10'; }}
+                            style={{ color: '#8300ff', borderTop: '1px solid #1F1F1F' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#8300ff10'; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                           >
                             <span>📋</span>
@@ -183,7 +183,7 @@ export function Navbar() {
                 <button
                   onClick={() => setOpen(o => !o)}
                   className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg transition-colors"
-                  style={{ color: open ? '#22C55E' : '#9CA3AF', background: open ? '#22C55E15' : 'transparent', border: '1px solid #1F1F1F' }}
+                  style={{ color: open ? '#8300ff' : '#9CA3AF', background: open ? '#8300ff15' : 'transparent', border: '1px solid #1F1F1F' }}
                   aria-label="Menu"
                 >
                   {open ? <IconX /> : <IconMenu />}
@@ -219,7 +219,7 @@ export function Navbar() {
             >
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold"
-                style={{ background: '#22C55E20', color: '#22C55E', border: '1px solid #22C55E40' }}
+                style={{ background: '#8300ff20', color: '#8300ff', border: '1px solid #8300ff40' }}
               >
                 {profile.username.charAt(0).toUpperCase()}
               </div>
@@ -243,9 +243,9 @@ export function Navbar() {
                     onClick={() => setOpen(false)}
                     className="flex items-center gap-3 px-4 py-3 text-sm font-medium transition-all"
                     style={{
-                      color: active ? '#22C55E' : '#9CA3AF',
-                      background: active ? '#22C55E10' : 'transparent',
-                      borderLeft: active ? '3px solid #22C55E' : '3px solid transparent',
+                      color: active ? '#8300ff' : '#9CA3AF',
+                      background: active ? '#8300ff10' : 'transparent',
+                      borderLeft: active ? '3px solid #8300ff' : '3px solid transparent',
                     }}
                   >
                     <span>{l.emoji}</span>
@@ -262,7 +262,7 @@ export function Navbar() {
                 <button
                   onClick={() => { setOpen(false); setPhaseModal(true); }}
                   className="w-full flex items-center gap-3 py-2.5 px-3 rounded-lg text-sm font-medium transition-all mt-2"
-                  style={{ color: '#22C55E', background: '#22C55E10', border: '1px solid #22C55E30' }}
+                  style={{ color: '#8300ff', background: '#8300ff10', border: '1px solid #8300ff30' }}
                 >
                   <span>⚙️</span>
                   <span>Configurar Fases</span>
@@ -271,7 +271,7 @@ export function Navbar() {
                   to="/auditoria"
                   onClick={() => setOpen(false)}
                   className="w-full flex items-center gap-3 py-2.5 px-3 rounded-lg text-sm font-medium transition-all"
-                  style={{ color: '#22C55E', background: '#22C55E10', border: '1px solid #22C55E30' }}
+                  style={{ color: '#8300ff', background: '#8300ff10', border: '1px solid #8300ff30' }}
                 >
                   <span>📋</span>
                   <span>Auditoria</span>

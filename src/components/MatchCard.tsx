@@ -272,7 +272,7 @@ export function MatchCard({ match, showBet = true }: Props) {
           ) : showBet && userBet ? (
             <>
               <div className={`text-sm font-bold px-2 py-1 rounded-lg inline-block ${
-                betPoints === 3 ? 'bg-green-900/40 text-green-400' :
+                betPoints === 3 ? 'bg-purple-900/40 text-purple-400' :
                 betPoints === 1 ? 'bg-yellow-900/40 text-yellow-400' :
                 betPoints === 0 ? 'bg-red-900/40 text-red-400' :
                 'bg-copa-green/10 text-copa-green'
@@ -356,8 +356,8 @@ export function MatchCard({ match, showBet = true }: Props) {
                   onClick={() => setTab('bet')}
                   className="flex-1 py-2 text-sm font-semibold transition-all"
                   style={{
-                    background: tab === 'bet' ? '#22C55E' : 'transparent',
-                    color: tab === 'bet' ? '#000' : '#6B7280',
+                    background: tab === 'bet' ? '#8300ff' : 'transparent',
+                    color: tab === 'bet' ? '#fff' : '#6B7280',
                   }}
                 >
                   Meu Palpite
@@ -416,13 +416,13 @@ export function MatchCard({ match, showBet = true }: Props) {
                         <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider font-semibold">Seu palpite</p>
                         <div
                           className="text-lg font-black"
-                          style={{ color: '#22C55E' }}
+                          style={{ color: '#8300ff' }}
                         >
                           {userBet.homeScore} × {userBet.awayScore}
                         </div>
                         {isPlayed && betPoints !== null && (
                           <div className={`text-sm font-bold mt-1 ${
-                            betPoints === 3 ? 'text-green-400' :
+                            betPoints === 3 ? 'text-purple-400' :
                             betPoints === 1 ? 'text-yellow-400' : 'text-red-400'
                           }`}>
                             +{betPoints} {betPoints === 1 ? 'ponto' : 'pontos'}

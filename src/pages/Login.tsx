@@ -30,11 +30,11 @@ export function Login() {
       className="min-h-screen flex flex-col items-center justify-center px-4 relative overflow-hidden"
       style={{ background: '#070707' }}
     >
-      {/* Glow verde no topo */}
+      {/* Glow roxo no topo */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: 'radial-gradient(ellipse 70% 45% at 50% 0%, #22C55E1A 0%, transparent 65%)',
+          background: 'radial-gradient(ellipse 70% 45% at 50% 0%, #8300ff1A 0%, transparent 65%)',
         }}
       />
 
@@ -46,13 +46,13 @@ export function Login() {
           </p>
           <h1
             className="text-6xl font-black uppercase text-white leading-none tracking-tight mb-1"
-            style={{ fontStyle: 'italic', textShadow: '0 0 50px #22C55E2A' }}
+            style={{ fontStyle: 'italic', textShadow: '0 0 50px #8300ff2A' }}
           >
             BOLÃO DA
           </h1>
           <h1
             className="text-6xl font-black uppercase leading-none tracking-tight"
-            style={{ fontStyle: 'italic', color: '#22C55E', textShadow: '0 0 40px #22C55E66' }}
+            style={{ fontStyle: 'italic', color: '#8300ff', textShadow: '0 0 40px #8300ff66' }}
           >
             COPA 🏆
           </h1>
@@ -80,10 +80,10 @@ export function Login() {
           <button
             onClick={handleGoogle}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 font-bold py-3.5 px-4 rounded-xl transition-all text-black"
-            style={{ background: '#22C55E' }}
-            onMouseEnter={e => { if (!loading) { (e.currentTarget as HTMLElement).style.background = '#16A34A'; (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 6px 24px #22C55E44'; } }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#22C55E'; (e.currentTarget as HTMLElement).style.transform = ''; (e.currentTarget as HTMLElement).style.boxShadow = ''; }}
+            className="w-full flex items-center justify-center gap-3 font-bold py-3.5 px-4 rounded-xl transition-all text-white"
+            style={{ background: '#8300ff' }}
+            onMouseEnter={e => { if (!loading) { (e.currentTarget as HTMLElement).style.background = '#6600cc'; (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 6px 24px #8300ff44'; } }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#8300ff'; (e.currentTarget as HTMLElement).style.transform = ''; (e.currentTarget as HTMLElement).style.boxShadow = ''; }}
           >
             {loading ? (
               <span className="animate-pulse">Redirecionando...</span>
@@ -98,15 +98,15 @@ export function Login() {
           {/* Aviso de domínio */}
           <p className="text-center text-xs mt-4" style={{ color: '#374151' }}>
             Exclusivo para colaboradores{' '}
-            <span style={{ color: '#22C55E' }}>@golfleet.com.br</span>
+            <span style={{ color: '#8300ff' }}>@golfleet.com.br</span>
           </p>
         </div>
 
         {/* Linha decorativa */}
         <div className="mt-8 flex items-center gap-3 w-full opacity-30">
-          <div className="flex-1 h-px" style={{ background: '#22C55E' }} />
+          <div className="flex-1 h-px" style={{ background: '#8300ff' }} />
           <span className="text-xs text-copa-green font-bold tracking-widest uppercase">Golfleet</span>
-          <div className="flex-1 h-px" style={{ background: '#22C55E' }} />
+          <div className="flex-1 h-px" style={{ background: '#8300ff' }} />
         </div>
       </div>
     </div>

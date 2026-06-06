@@ -5,8 +5,8 @@ export default {
     extend: {
       colors: {
         copa: {
-          green: '#22C55E',   // verde esportivo principal
-          gold:  '#4ADE80',   // verde claro — pontos / destaques
+          green: '#8300ff',   // roxo Golfleet principal
+          gold:  '#B366FF',   // roxo claro — pontos / destaques
           red:   '#EF4444',   // vermelho admin
           dark:  '#070707',   // fundo preto
           navy:  '#111111',   // cards

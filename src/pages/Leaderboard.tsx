@@ -143,7 +143,7 @@ export function Leaderboard() {
           onClick={() => refresh(false)}
           disabled={loading || refreshing}
           className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-all disabled:opacity-40"
-          style={{ color: '#22C55E', border: '1px solid #22C55E40', background: '#22C55E10' }}
+          style={{ color: '#8300ff', border: '1px solid #8300ff40', background: '#8300ff10' }}
         >
           {refreshing ? 'Atualizando...' : loading ? 'Carregando...' : '↻ Atualizar'}
         </button>
@@ -171,8 +171,8 @@ export function Leaderboard() {
                 key={e.profile.id}
                 className="rounded-xl p-4 flex items-center gap-4 transition-all"
                 style={{
-                  background: isMe ? '#22C55E0D' : '#111111',
-                  border: `1px solid ${isMe ? '#22C55E40' : '#1F1F1F'}`,
+                  background: isMe ? '#8300ff0D' : '#111111',
+                  border: `1px solid ${isMe ? '#8300ff40' : '#1F1F1F'}`,
                 }}
               >
                 {/* Posição */}
@@ -185,9 +185,9 @@ export function Leaderboard() {
                   <div
                     className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                     style={{
-                      background: isMe ? '#22C55E20' : '#1A1A1A',
-                      color: isMe ? '#22C55E' : '#6B7280',
-                      border: `1px solid ${isMe ? '#22C55E40' : '#2A2A2A'}`,
+                      background: isMe ? '#8300ff20' : '#1A1A1A',
+                      color: isMe ? '#8300ff' : '#6B7280',
+                      border: `1px solid ${isMe ? '#8300ff40' : '#2A2A2A'}`,
                     }}
                   >
                     {e.profile.username.charAt(0).toUpperCase()}
@@ -198,7 +198,7 @@ export function Leaderboard() {
                       {isMe && (
                         <span
                           className="text-xs px-1.5 py-0.5 rounded-full font-bold"
-                          style={{ background: '#22C55E20', color: '#22C55E' }}
+                          style={{ background: '#8300ff20', color: '#8300ff' }}
                         >
                           você
                         </span>
@@ -218,7 +218,7 @@ export function Leaderboard() {
                 <div className="text-right shrink-0">
                   <div
                     className="text-2xl font-black"
-                    style={{ color: '#22C55E', fontStyle: 'italic' }}
+                    style={{ color: '#8300ff', fontStyle: 'italic' }}
                   >
                     {e.totalPoints}
                   </div>

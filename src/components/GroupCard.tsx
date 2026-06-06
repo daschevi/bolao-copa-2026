@@ -15,7 +15,7 @@ export function GroupCard({ group, matches }: Props) {
 
   return (
     <div className="card">
-      <h2 className="text-copa-gold font-bold text-lg mb-3">Grupo {group}</h2>
+      <h2 className="text-copa-green font-bold text-lg mb-3">Grupo {group}</h2>
 
       {/* Standings table */}
       <div className="mb-4 overflow-x-auto">
@@ -41,7 +41,7 @@ export function GroupCard({ group, matches }: Props) {
                   <td className="py-1 pr-2 text-gray-500">{i + 1}</td>
                   <td className="py-1 w-full max-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${i < 2 ? 'bg-copa-green' : i < 3 ? 'bg-copa-gold' : 'bg-transparent'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${i < 2 ? 'bg-copa-green' : i < 3 ? 'bg-copa-gold' : 'bg-transparent border border-gray-700'}`} />
                       {team && <Flag code={team.code} name={team.name} size="sm" />}
                       <span className="text-white text-xs truncate min-w-0" title={team?.name}>{team?.name}</span>
                     </div>
