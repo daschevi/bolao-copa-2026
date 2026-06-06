@@ -107,9 +107,11 @@ export default function App() {
     runSync();
 
     // Segundo sync após 15s — fallback se a 1ª passada ainda pegou cold start.
-    // Re-acorda o servidor por garantia.
+    // Re-acorda o servidor por garantia e drena qualquer op que ficou na outbox
+    // (ex.: palpite colocado durante o cold start que esgotou os retries da 1ª tentativa).
     const retryTimer = setTimeout(async () => {
       await wakeUpSupabase();
+      await drainOutbox(); // re-tenta ops pendentes antes de buscar estado do BD
       await Promise.allSettled([
         syncFromSupabase(),
         ...(profile ? [fetchAllBets(), syncPhaseSettings()] : []),

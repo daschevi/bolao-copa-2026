@@ -366,19 +366,24 @@ export async function persistOp(
         // re-tenta com token renovado (não conta como backoff)
         continue;
       }
-      // RLS-block: pode ser efeito colateral de sessão expirada silenciosamente
-      // (auth.uid() vira null → policy `auth.uid() = user_id` falha como RLS).
-      // Renova UMA vez e re-tenta; se ainda for RLS, aí é realmente irrecuperável.
+      // RLS-block: pode ser efeito colateral de sessão ainda não estabelecida no
+      // boot (auth.uid() retorna null enquanto initAuth / refreshSession está em
+      // voo). Renova UMA vez e re-tenta; se ainda der RLS, mantém na outbox com
+      // bumpAttempts em vez de descartar — o drainOutbox vai re-tentar quando a
+      // sessão estiver estável (visibilitychange, online, ou timer de 15s).
       if (isRlsError(lastErrorMsg)) {
         if (!rlsRefreshAttempted) {
           rlsRefreshAttempted = true;
-          console.warn(`[${label}] RLS-block — tentando renovar token antes de descartar`);
+          console.warn(`[${label}] RLS-block — tentando renovar token antes de re-tentativa`);
           const refreshed = await tryRefreshToken();
           if (refreshed) continue; // re-tenta com token novo
         }
-        removeFromOutbox(id);
-        console.error(`[${label}] RLS persistiu após refresh, descartando:`, lastErrorMsg);
-        onError?.('Sessão inválida — palpite não pôde ser salvo. Saia e entre novamente.');
+        // RLS persistiu mesmo após refresh. Não descartamos: o problema pode ser
+        // uma race de inicialização (sessão ainda em voo). A op fica na outbox e
+        // será re-drenada quando a sessão estiver totalmente estabelecida.
+        bumpAttempts(id);
+        console.warn(`[${label}] RLS persistiu após refresh — op permanece na outbox para próxima sync`);
+        onError?.('Sessão ainda não pronta — palpite será sincronizado automaticamente em breve.');
         return;
       }
       console.warn(`[${label}] tentativa ${attempt}/${retries}:`, lastErrorMsg);
@@ -438,10 +443,14 @@ export async function drainOutbox(): Promise<void> {
         if (!retryResult.error) {
           removeFromOutbox(op.id);
           console.log(`[outbox:${op.label}] reenviado com sucesso após refresh`);
-        } else if (isSchemaError(retryResult.error.message) || isRlsError(retryResult.error.message)) {
-          // Mesmo após refresh ainda é schema/RLS — irrecuperável, descarta
+        } else if (isSchemaError(retryResult.error.message)) {
+          // Schema irrecuperável — descarta
           removeFromOutbox(op.id);
-          console.error(`[outbox:${op.label}] persistiu após refresh, descartando:`, retryResult.error.message);
+          console.error(`[outbox:${op.label}] erro de schema após refresh, descartando:`, retryResult.error.message);
+        } else if (isRlsError(retryResult.error.message)) {
+          // RLS após refresh — pode ser race de boot; mantém na outbox para próximo drain
+          bumpAttempts(op.id);
+          console.warn(`[outbox:${op.label}] RLS após refresh — mantendo na outbox para próximo drain`);
         } else {
           bumpAttempts(op.id);
           console.warn(`[outbox:${op.label}] ainda falha após refresh:`, retryResult.error.message);
@@ -488,19 +497,21 @@ export async function drainOutbox(): Promise<void> {
           }
           await tryRetryAfterRefresh(op);
         } else if (isRlsError(result.error.message)) {
-          // RLS-block: pode ser sessão silenciosamente expirada.
-          // Renova UMA vez por drain e re-tenta; se ainda RLS, descarta.
+          // RLS-block: pode ser race de inicialização (sessão ainda em voo no boot).
+          // Renova UMA vez por drain e re-tenta; se ainda RLS, mantém na outbox
+          // em vez de descartar — o próximo drain (visibilitychange / timer 15s)
+          // tentará novamente quando a sessão estiver totalmente estabelecida.
           if (tokenRefreshedThisRun) {
-            removeFromOutbox(op.id);
-            console.error(`[outbox:${op.label}] RLS persistiu após refresh, descartando:`, result.error.message);
+            bumpAttempts(op.id);
+            console.warn(`[outbox:${op.label}] RLS persistiu após refresh — mantendo na outbox para próximo drain`);
           } else {
             tokenRefreshedThisRun = true;
-            console.warn('[outbox] RLS-block — tentando renovar token antes de descartar');
+            console.warn('[outbox] RLS-block — tentando renovar token antes de re-tentativa');
             const refreshed = await tryRefreshToken();
             if (!refreshed) {
-              // Refresh falhou → sessão morta. Descarta esta op (RLS sem sessão é permanente).
-              removeFromOutbox(op.id);
-              console.error(`[outbox:${op.label}] RLS sem sessão válida, descartando:`, result.error.message);
+              // Refresh falhou — mantém na outbox para o próximo drain
+              bumpAttempts(op.id);
+              console.warn(`[outbox:${op.label}] RLS sem refresh válido — mantendo na outbox`);
               continue;
             }
             await tryRetryAfterRefresh(op);

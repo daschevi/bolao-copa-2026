@@ -170,13 +170,30 @@ export const useBetsStore = create<BetsState>()(
             if (bet.userId !== currentUserId) return; // ignora bets de outro usuário
             if (!dbBets[key] && bet.pendingPersist && bet.userId && bet.matchId) {
               console.log(`[betsStore] reconciliando bet pendente: ${key}`);
-              persistOp({
-                kind: 'upsert',
-                table: 'bets',
-                payload: { user_id: bet.userId, match_id: bet.matchId, home_score: bet.homeScore, away_score: bet.awayScore },
-                onConflict: 'user_id,match_id',
-                label: `reconcile:${key}`,
-              });
+              // Captura os scores no closure para validar no onSuccess (evita
+              // limpar pendingPersist caso o usuário já tenha editado o palpite).
+              const reconciledHome = bet.homeScore;
+              const reconciledAway = bet.awayScore;
+              persistOp(
+                {
+                  kind: 'upsert',
+                  table: 'bets',
+                  payload: { user_id: bet.userId, match_id: bet.matchId, home_score: reconciledHome, away_score: reconciledAway },
+                  onConflict: 'user_id,match_id',
+                  label: `reconcile:${key}`,
+                },
+                {
+                  onSuccess: () => {
+                    set(state => {
+                      const existing = state.bets[key];
+                      // Só limpa se o palpite atual ainda corresponde ao que foi salvo
+                      if (!existing?.pendingPersist) return state;
+                      if (existing.homeScore !== reconciledHome || existing.awayScore !== reconciledAway) return state;
+                      return { bets: { ...state.bets, [key]: { ...existing, pendingPersist: false } } };
+                    });
+                  },
+                }
+              );
             }
           });
 
