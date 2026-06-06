@@ -294,7 +294,7 @@ set search_path = public
 as $body$
 begin
   if not exists (
-    select 1 from profiles where id = auth.uid() and is_admin = true
+    select 1 from profiles where profiles.id = auth.uid() and profiles.is_admin = true
   ) then
     raise exception 'Acesso negado: apenas administradores podem consultar logs de auditoria';
   end if;
