@@ -147,7 +147,10 @@ export function AuditLog() {
     }
   }, [filter, limit]);
 
-  useEffect(() => { load(); }, [load]);
+  // Diferido via microtask: sai do tick síncrono do effect (load chama
+  // setLoading/setError/setLogs internamente) e satisfaz a regra
+  // react-hooks/set-state-in-effect sem cascading render.
+  useEffect(() => { queueMicrotask(load); }, [load]);
 
   if (!profile?.isAdmin) return null;
 
@@ -307,6 +310,15 @@ export function AuditLog() {
         >
           <div className="text-3xl mb-2">📭</div>
           <p className="text-sm font-semibold text-white">Nenhum registro ainda</p>
+          <p className="text-xs mt-1" style={{ color: '#4B5563' }}>
+            Os logs aparecem aqui assim que usuários realizarem ações no app.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+a</p>
           <p className="text-xs mt-1" style={{ color: '#4B5563' }}>
             Os logs aparecem aqui assim que usuários realizarem ações no app.
           </p>

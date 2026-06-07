@@ -5,7 +5,6 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseKey, {
       auth: {
@@ -14,6 +13,7 @@ export const supabase = isSupabaseConfigured
         detectSessionInUrl: true,  // captura o hash do redirect OAuth (PKCE)
       },
     })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   : (null as any);
 
 /**
@@ -44,11 +44,14 @@ export async function sq(
   ]);
 
   const first = await exec();
-  if (first.error && isJwtExpiredError(first.error.message)) {
-    // Sessão pode ter expirado em background (mobile > 1h). Renova e re-tenta uma vez.
+  // Trata JWT expirado E RLS-block: ambos podem ser efeito de sessão silenciosamente
+  // expirada. Quando auth.uid() vira null, o Postgres bloqueia com mensagem de RLS
+  // (não de JWT). Renova e re-tenta uma vez nos dois casos.
+  if (first.error && (isJwtExpiredError(first.error.message) || isRlsError(first.error.message))) {
+    const cause = isJwtExpiredError(first.error.message) ? 'JWT expirado' : 'RLS-block';
     const refreshed = await tryRefreshToken();
     if (refreshed) {
-      console.log('[sq] JWT renovado — re-tentando query');
+      console.log(`[sq] ${cause} — token renovado, re-tentando query`);
       const retry = await exec();
       if (!retry.error) markServerActive();
       return retry;
@@ -549,6 +552,17 @@ export function hasPendingOutboxOpForMatch(matchId: string): boolean {
     if (op.kind === 'upsert') return op.payload.match_id === matchId;
     if (op.kind === 'delete') {
       return op.match.column === 'match_id' && op.match.value === matchId;
+    }
+    return false;
+  });
+}
+dOutbox().some(op => {
+    if (op.kind === 'upsert') {
+      return op.table === 'match_results' && op.payload.match_id === matchId;
+    }
+    return op.table === 'match_results' && op.match.column === 'match_id' && op.match.value === matchId;
+  });
+}
     }
     return false;
   });
