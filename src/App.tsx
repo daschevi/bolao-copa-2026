@@ -12,7 +12,7 @@ import { useAuthStore } from './store/authStore';
 import { useTournamentStore } from './store/tournamentStore';
 import { useBetsStore } from './store/betsStore';
 import { usePhaseSettingsStore } from './store/phaseSettingsStore';
-import { supabase, isSupabaseConfigured, drainOutbox, wakeUpSupabase } from './lib/supabase';
+import { supabase, isSupabaseConfigured, drainOutbox, wakeUpSupabase, getOutboxSize } from './lib/supabase';
 import { useBolaoSync, isSyncStale, markSyncDone } from './hooks/useBolaoSync';
 import { useBolaoRealtime } from './hooks/useBolaoRealtime';
 import { useSessionToast } from './hooks/useSessionToast';
@@ -92,8 +92,19 @@ export default function App() {
       ]);
       markSyncDone(profile.id);
     };
+    // `pageshow` é equivalente a `visibilitychange` para o caso de "voltar
+    // do bfcache" do navegador. No Chrome Android, em certas situações
+    // (voltar de outra aba, restaurar app do background, navegar com botão
+    // "voltar"), apenas `pageshow` dispara — e sem ele o token continua
+    // stale e o próximo palpite cai em RLS-block silencioso.
+    // O handler `onVisible` checa `document.visibilityState === 'visible'`
+    // internamente, então é seguro escutar nos dois eventos.
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+    };
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-drena outbox quando rede volta (offline → online sem trocar de aba).
@@ -102,6 +113,39 @@ export default function App() {
     window.addEventListener('online', onOnline);
     return () => window.removeEventListener('online', onOnline);
   }, []);
+
+  // Drain proativo: a cada 30s, se há ops pendentes na outbox, tenta drenar
+  // E em seguida ressincroniza para limpar `pendingPersist` no estado local.
+  //
+  // Por que é necessário (e por que o sync depois do drain é crítico):
+  //
+  // O flag `pendingPersist=true` que renderiza "⟳ sincronizando…" só é
+  // limpo em dois caminhos:
+  //   (a) `onSuccess` da chamada original do `persistOp` (closure do saveBet)
+  //   (b) `fetchAllBets` faz merge e vê que o BD bate com o local pendente
+  //
+  // Quando o `drainOutbox` sucede em enviar uma op (porque o persistOp
+  // original falhou em retries), (a) NÃO dispara — a closure foi perdida.
+  // Sem (b), o flag fica preso pra sempre. Por isso, sempre que drenar
+  // algo com sucesso, disparamos `fetchAllBets`/`syncFromSupabase` para
+  // que o merge limpe os flags.
+  //
+  // Custos:
+  //   - `getOutboxSize()`: O(1), uma leitura de localStorage + parse.
+  //   - Sem ops pendentes: custo zero.
+  //   - Em background, o browser pausa o timer (não consome bateria).
+  useEffect(() => {
+    if (!profile || !isSupabaseConfigured) return;
+    const id = setInterval(async () => {
+      if (getOutboxSize() === 0) return;
+      console.log('[outbox-watcher] ops pendentes detectadas — drenando e ressincronizando');
+      await drainOutbox();
+      // Ressincroniza para limpar `pendingPersist` dos itens que subiram via drain
+      // (cujo `onSuccess` do persistOp original já era closure morta).
+      await Promise.allSettled([fetchAllBets(), syncFromSupabase()]);
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drena outbox no foco da janela — cobre combinações browser/OS onde
   // window.focus dispara sem visibilitychange. NÃO chama checkConnectionOrLogout
@@ -185,6 +229,70 @@ export default function App() {
         <div className="fixed bottom-4 left-0 right-0 flex justify-center px-4 z-[100]">
           <div
             className="flex items-center gap-3 rounded-xl px-4 py-3 shadow-xl w-full max-w-sm"
+            style={{ background: '#1C0A0A', border: '1px solid #EF444450' }}
+          >
+            <span className="text-xl shrink-0">⚠️</span>
+            <span className="text-sm flex-1" style={{ color: '#FCA5A5' }}>
+              {sessionExpiredMessage}
+            </span>
+            <button
+              onClick={clearSessionMessage}
+              className="shrink-0 leading-none hover:opacity-70"
+              style={{ color: '#F87171' }}
+            >✕</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+          className="flex items-center gap-3 rounded-xl px-4 py-3 shadow-xl w-full max-w-sm"
+            style={{ background: '#1C0A0A', border: '1px solid #EF444450' }}
+          >
+            <span className="text-xl shrink-0">⚠️</span>
+            <span className="text-sm flex-1" style={{ color: '#FCA5A5' }}>
+              {sessionExpiredMessage}
+            </span>
+            <button
+              onClick={clearSessionMessage}
+              className="shrink-0 leading-none hover:opacity-70"
+              style={{ color: '#F87171' }}
+            >✕</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+/>
+          <Route path="*"              element={<Navigate to={profile ? '/grupos' : '/login'} replace />} />
+        </Routes>
+      </HashRouter>
+
+      {/* Toast de sessão expirada — renderizado fora do Router para sobreviver
+          à troca de rota que ocorre imediatamente após o logout. */}
+      {sessionExpiredMessage && (
+        <div className="fixed bottom-4 left-0 right-0 flex justify-center px-4 z-[100]">
+          <div
+            className="flex items-center gap-3 rounded-xl px-4 py-3 shadow-xl w-full max-w-sm"
+            style={{ background: '#1C0A0A', border: '1px solid #EF444450' }}
+          >
+            <span className="text-xl shrink-0">⚠️</span>
+            <span className="text-sm flex-1" style={{ color: '#FCA5A5' }}>
+              {sessionExpiredMessage}
+            </span>
+            <button
+              onClick={clearSessionMessage}
+              className="shrink-0 leading-none hover:opacity-70"
+              style={{ color: '#F87171' }}
+            >✕</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+x items-center gap-3 rounded-xl px-4 py-3 shadow-xl w-full max-w-sm"
             style={{ background: '#1C0A0A', border: '1px solid #EF444450' }}
           >
             <span className="text-xl shrink-0">⚠️</span>

@@ -99,8 +99,8 @@ function sanitizeScore(val: string): string {
 }
 
 export function MatchCard({ match, showBet = true }: Props) {
-  const profile          = useAuthStore(s => s.profile);
-  const checkConnection  = useAuthStore(s => s.checkConnection);
+  const profile                  = useAuthStore(s => s.profile);
+  const checkConnectionOrLogout  = useAuthStore(s => s.checkConnectionOrLogout);
   const { getBet, saveBet } = useBetsStore();
   const { setResult, resetMatch } = useTournamentStore();
   const phaseConfig = usePhaseSettingsStore(s => s.phases[match.stage as StageKey]);
@@ -137,7 +137,7 @@ export function MatchCard({ match, showBet = true }: Props) {
     ? `Grupo ${match.group} · Rodada ${match.matchDay}`
     : STAGE_LABEL[match.stage] ?? match.stage;
 
-  const handleSaveBet = () => {
+  const handleSaveBet = async () => {
     if (!profile) return;
     // Re-lê o store no momento exato do clique — evita usar canBet stale da closure.
     // O `canBet` da renderização captura `new Date()` uma única vez; se o prazo
@@ -146,18 +146,33 @@ export function MatchCard({ match, showBet = true }: Props) {
     const liveDeadline = usePhaseSettingsStore.getState().phases[match.stage as StageKey]?.betsDeadline ?? null;
     if (!isBetOpen(match, liveDeadline)) return; // prazo expirou
     if (!canBet) return;
-    // checkConnection() é 100% síncrono — compara Date.now() com sessionExpiresAt.
-    // Zero latência, zero mutex, nunca bloqueia a UI.
-    if (!checkConnection()) return;
+
+    // Refresh ATIVO do token antes do write.
+    //
+    // Antes só chamávamos `checkConnection()` (síncrono, com tolerância de
+    // +5 min). No mobile, ao voltar do background, o JWT pode estar stale
+    // mas dentro dessa tolerância — o write então cai no Postgres com
+    // auth.uid()=null e leva RLS-block, deixando o palpite preso em
+    // "sincronizando…" para sempre.
+    //
+    // `checkConnectionOrLogout()` FAZ refresh real (1 call de auth, ~200ms)
+    // e atualiza o JWT do WebSocket do Realtime. Latência aceitável no save;
+    // confiabilidade do mobile aumenta drasticamente.
+    const sessionOk = await checkConnectionOrLogout();
+    if (!sessionOk) return; // refresh token também morto — usuário foi deslogado
+
     const home = betHome === '' ? 0 : Number(betHome);
     const away = betAway === '' ? 0 : Number(betAway);
     setOpen(false);
     saveBet(profile.id, match.id, home, away);
   };
 
-  const handleSaveResult = () => {
+  const handleSaveResult = async () => {
     if (!isAdmin) return;
-    if (!checkConnection()) return;
+    // Mesma razão do handleSaveBet — refresh ativo evita RLS-block silencioso
+    // por JWT stale no mobile/admin volta do background.
+    const sessionOk = await checkConnectionOrLogout();
+    if (!sessionOk) return;
     const h = resHome === '' ? 0 : Number(resHome);
     const a = resAway === '' ? 0 : Number(resAway);
     const needsPens = match.stage !== 'group' && h === a;
