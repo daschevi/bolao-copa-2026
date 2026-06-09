@@ -33,7 +33,7 @@ export function markSyncDone(userId: string): void {
  * Sequência:
  *   1. wakeUpSupabase()  — cobre cold start do free tier
  *   2. drainOutbox()     — sobe ops pendentes da sessão anterior
- *   3. syncFromSupabase / fetchAllBets / syncPhaseSettings em paralelo
+ *   3. syncFromSupabase / fetchMyBets(userId) / syncPhaseSettings em paralelo
  *   4. setTimeout 15 s   — fallback se a 1ª passada pegou cold start
  *
  * `wakeUpSupabase` antes dos syncs paralelos é crítico: sem ele, as 3
@@ -45,7 +45,7 @@ export function useBolaoSync(
   profile: Profile | null,
 ): void {
   const syncFromSupabase  = useTournamentStore(s => s.syncFromSupabase);
-  const fetchAllBets      = useBetsStore(s => s.fetchAllBets);
+  const fetchMyBets       = useBetsStore(s => s.fetchMyBets);
   const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export function useBolaoSync(
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
-        ...(profile ? [fetchAllBets(), syncPhaseSettings()] : []),
+        ...(profile ? [fetchMyBets(profile.id), syncPhaseSettings()] : []),
       ]);
       if (profile) markSyncDone(profile.id);
     };
@@ -68,7 +68,7 @@ export function useBolaoSync(
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
-        ...(profile ? [fetchAllBets(), syncPhaseSettings()] : []),
+        ...(profile ? [fetchMyBets(profile.id), syncPhaseSettings()] : []),
       ]);
       if (profile) markSyncDone(profile.id);
     }, 15000);

@@ -33,7 +33,7 @@ export default function App() {
   const sessionExpiredMessage    = useAuthStore(s => s.sessionExpiredMessage);
   const clearSessionMessage      = useAuthStore(s => s.clearSessionExpiredMessage);
   const syncFromSupabase         = useTournamentStore(s => s.syncFromSupabase);
-  const fetchAllBets             = useBetsStore(s => s.fetchAllBets);
+  const fetchMyBets              = useBetsStore(s => s.fetchMyBets);
   const syncPhaseSettings        = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
   // Auto-dismiss do toast de sessão expirada após 6 s
@@ -87,7 +87,7 @@ export default function App() {
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
-        fetchAllBets(),
+        fetchMyBets(profile.id),
         syncPhaseSettings(),
       ]);
       markSyncDone(profile.id);
@@ -142,7 +142,7 @@ export default function App() {
       await drainOutbox();
       // Ressincroniza para limpar `pendingPersist` dos itens que subiram via drain
       // (cujo `onSuccess` do persistOp original já era closure morta).
-      await Promise.allSettled([fetchAllBets(), syncFromSupabase()]);
+      await Promise.allSettled([fetchMyBets(profile.id), syncFromSupabase()]);
     }, 30_000);
     return () => clearInterval(id);
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps

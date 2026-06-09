@@ -1,10 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
-import type { Bet, LeaderboardEntry, Profile } from '../types';
+import type { Bet, LeaderboardEntry } from '../types';
 import { calcPoints } from '../types';
 import { useTournamentStore } from './tournamentStore';
-import { useAuthStore } from './authStore';
 
 interface BetsState {
   bets: Record<string, Bet>; // key: `${userId}-${matchId}`
@@ -12,8 +11,18 @@ interface BetsState {
   getUserBets: (userId: string) => Bet[];
   getBet: (userId: string, matchId: string) => Bet | undefined;
   getUserPoints: (userId: string) => { total: number; exact: number; correct: number; totalBets: number };
-  fetchAllBets: () => Promise<void>;
-  getLeaderboard: (profiles: Profile[]) => LeaderboardEntry[];
+  /**
+   * Busca no banco apenas as apostas do usuário atual (WHERE user_id = userId).
+   * Usa o índice UNIQUE(user_id, match_id) — leitura O(log n) em vez de O(n).
+   * Substitui o antigo fetchAllBets em todos os pontos de sync periódico.
+   */
+  fetchMyBets: (userId: string) => Promise<void>;
+  /**
+   * Chama a RPC get_leaderboard() no servidor: devolve N linhas já agregadas
+   * (uma por usuário) em vez de N×72 linhas brutas.
+   * Usada exclusivamente pela página Leaderboard.tsx.
+   */
+  fetchLeaderboard: () => Promise<LeaderboardEntry[]>;
 }
 
 export const useBetsStore = create<BetsState>()(
@@ -26,7 +35,7 @@ export const useBetsStore = create<BetsState>()(
         const match = useTournamentStore.getState().matches[matchId];
         const points = match?.played ? calcPoints({ homeScore, awayScore }, match) : null;
         // Marca pendingPersist=true até o BD confirmar — o merge do
-        // fetchAllBets preserva esta entrada em vez de sobrescrever com a
+        // fetchMyBets preserva esta entrada em vez de sobrescrever com a
         // versão antiga do BD (que ainda não a tem).
         const bet: Bet = { userId, matchId, homeScore, awayScore, points, pendingPersist: true };
 
@@ -90,7 +99,7 @@ export const useBetsStore = create<BetsState>()(
         return { total, exact, correct, totalBets: userBets.length };
       },
 
-      fetchAllBets: async () => {
+      fetchMyBets: async (userId: string) => {
         if (!isSupabaseConfigured) return;
 
         // Retry até 3× com backoff — cobre cold start do Supabase free tier
@@ -98,15 +107,18 @@ export const useBetsStore = create<BetsState>()(
           // 15s na 1ª tentativa, 25s nas retentativas — cobre cold start de
           // 5-10s do Supabase free tier após período de inatividade.
           const timeoutMs = attempt === 1 ? 15000 : 25000;
-          const { data, error } = await sq(() => supabase.from('bets').select('*'), timeoutMs);
+          const { data, error } = await sq(
+            () => supabase.from('bets').select('*').eq('user_id', userId),
+            timeoutMs,
+          );
 
           if (error) {
-            console.warn(`[betsStore] fetchAllBets tentativa ${attempt}/3:`, error.message);
+            console.warn(`[betsStore] fetchMyBets tentativa ${attempt}/3:`, error.message);
             if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
             continue;
           }
 
-          // Monta mapa com o que veio do banco
+          // Monta mapa com o que veio do banco para este usuário
           const dbBets: Record<string, Bet> = {};
           (data ?? []).forEach((b: {
             user_id: string;
@@ -124,50 +136,52 @@ export const useBetsStore = create<BetsState>()(
             };
           });
 
-          // Captura bets locais antes do merge (para reconciliação)
+          // Captura bets locais antes do merge (para reconciliação de pending)
           const localBets = get().bets;
-          const currentUserId = useAuthStore.getState().profile?.id;
 
-          // Merge: banco sobrescreve chaves conhecidas EXCETO quando há uma
+          // Merge: banco sobrescreve entradas do usuário EXCETO quando há uma
           // escrita local ainda pendente (pendingPersist=true). Bets locais
           // ausentes no banco também são preservadas se pendentes.
+          // Bets de outros usuários são descartadas: o leaderboard usa RPC agora.
           set(state => {
-            const merged: Record<string, Bet> = { ...state.bets };
+            const merged: Record<string, Bet> = {};
+
+            // 1. Aplica dados do banco para o usuário atual
             Object.entries(dbBets).forEach(([key, dbBet]) => {
-              const localBet = merged[key];
+              const localBet = state.bets[key];
               if (localBet?.pendingPersist) {
-                // BD já chegou ao mesmo estado → não há mais pendência, libera o flag
+                // BD chegou ao mesmo estado → limpa flag de pendência
                 if (localBet.homeScore === dbBet.homeScore &&
                     localBet.awayScore === dbBet.awayScore) {
                   merged[key] = { ...localBet, pendingPersist: false };
+                } else {
+                  // Usuário editou enquanto o save estava em voo — mantém local
+                  // (será re-enviada pelo persistOp original ou pela reconciliação)
+                  merged[key] = localBet;
                 }
-                // scores diferentes = usuário editou enquanto o save estava em voo,
-                // preserva versão local (será re-enviada pelo persistOp original)
                 return;
               }
               merged[key] = dbBet;
             });
 
-            // Remove bets locais ausentes no BD que não estão pendentes de sync.
-            // BD é fonte da verdade para dados confirmados — se uma bet foi
-            // deletada externamente (ex: admin limpou a tabela), ela deve
-            // desaparecer do estado local. Preservamos apenas bets com
-            // pendingPersist=true (escrita ainda em voo, não confirmada pelo BD).
-            Object.keys(merged).forEach(key => {
-              if (!dbBets[key] && !merged[key].pendingPersist) {
-                delete merged[key];
+            // 2. Preserva bets pendentes do usuário que ainda não chegaram ao banco
+            //    (serão reconciliadas logo abaixo)
+            Object.entries(state.bets).forEach(([key, bet]) => {
+              if (bet.userId === userId && bet.pendingPersist && !merged[key]) {
+                merged[key] = bet;
               }
             });
+
+            // Nota: bets de outros usuários são intencionalmente descartadas.
+            // A classificação usa get_leaderboard() RPC — não precisa do store.
 
             return { bets: merged };
           });
 
-          // Reconciliação: re-envia ao banco bets locais do usuário atual que
+          // Reconciliação: re-envia ao banco bets locais do usuário que
           // ainda estão pendentes (pendingPersist=true) e não chegaram ao BD.
-          // Filtra por pendingPersist para não re-enviar bets que foram
-          // deletados externamente — esses já foram removidos do merged acima.
           Object.entries(localBets).forEach(([key, bet]) => {
-            if (bet.userId !== currentUserId) return; // ignora bets de outro usuário
+            if (bet.userId !== userId) return; // ignora bets de outro usuário
             if (!dbBets[key] && bet.pendingPersist && bet.userId && bet.matchId) {
               console.log(`[betsStore] reconciliando bet pendente: ${key}`);
               // Captura os scores no closure para validar no onSuccess (evita
@@ -200,25 +214,48 @@ export const useBetsStore = create<BetsState>()(
           return; // sucesso — sai do loop
         }
 
-        console.error('[betsStore] fetchAllBets falhou após 3 tentativas');
+        console.error('[betsStore] fetchMyBets falhou após 3 tentativas');
       },
 
-      getLeaderboard: (profiles) => {
-        const { getUserPoints, getUserBets } = get();
-        return profiles
-          // Exclui usuários que nunca registraram nenhum palpite
-          .filter(profile => getUserBets(profile.id).length > 0)
-          .map(profile => {
-            const stats = getUserPoints(profile.id);
-            return {
-              profile,
-              totalPoints:    stats.total,
-              exactScores:    stats.exact,
-              correctResults: stats.correct,
-              totalBets:      stats.totalBets,
-            };
-          })
-          .sort((a, b) => b.totalPoints - a.totalPoints || b.exactScores - a.exactScores);
+      fetchLeaderboard: async (): Promise<LeaderboardEntry[]> => {
+        if (!isSupabaseConfigured) return [];
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const timeoutMs = attempt === 1 ? 10000 : 20000;
+          const { data, error } = await sq(
+            () => supabase.rpc('get_leaderboard'),
+            timeoutMs,
+          );
+
+          if (error) {
+            console.warn(`[betsStore] fetchLeaderboard tentativa ${attempt}/3:`, error.message);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
+            continue;
+          }
+
+          return (data ?? []).map((row: {
+            user_id:       string;
+            username:      string;
+            total_points:  number;
+            exact_count:   number;
+            correct_count: number;
+            total_bets:    number;
+          }) => ({
+            profile: {
+              id:        row.user_id,
+              username:  row.username,
+              isAdmin:   false,
+              createdAt: '',
+            },
+            totalPoints:    Number(row.total_points),
+            exactScores:    Number(row.exact_count),
+            correctResults: Number(row.correct_count),
+            totalBets:      Number(row.total_bets),
+          }));
+        }
+
+        console.error('[betsStore] fetchLeaderboard falhou após 3 tentativas');
+        return [];
       },
     }),
     { name: 'bolao-bets', partialize: (s) => ({ bets: s.bets }) }

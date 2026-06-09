@@ -26,7 +26,7 @@ import type { Profile } from '../types';
  */
 export function useBolaoRealtime(profile: Profile | null): () => void {
   const syncFromSupabase  = useTournamentStore(s => s.syncFromSupabase);
-  const fetchAllBets      = useBetsStore(s => s.fetchAllBets);
+  const fetchMyBets       = useBetsStore(s => s.fetchMyBets);
   const syncPhaseSettings = usePhaseSettingsStore(s => s.syncPhaseSettings);
 
   // Ref atualizada pelo effect interno; expomos uma função pública estável
@@ -68,7 +68,7 @@ export function useBolaoRealtime(profile: Profile | null): () => void {
         )
         .on('postgres_changes',
           { event: '*', schema: 'public', table: 'bets' },
-          () => { fetchAllBets(); }
+          () => { fetchMyBets(profile.id); }
         )
         .on('postgres_changes',
           { event: '*', schema: 'public', table: 'phase_settings' },
@@ -97,7 +97,7 @@ export function useBolaoRealtime(profile: Profile | null): () => void {
             // Só dispara sync se a conexão durou tempo suficiente.
             if (wasStable) {
               syncFromSupabase();
-              fetchAllBets();
+              fetchMyBets(profile.id);
               syncPhaseSettings();
             }
 
@@ -136,7 +136,7 @@ export function useBolaoRealtime(profile: Profile | null): () => void {
         if (activeChannel) { supabase.removeChannel(activeChannel); activeChannel = null; }
         // Sync manual para recuperar eventos perdidos durante o offline.
         syncFromSupabase();
-        fetchAllBets();
+        fetchMyBets(profile.id);
         syncPhaseSettings();
         connect();
       }

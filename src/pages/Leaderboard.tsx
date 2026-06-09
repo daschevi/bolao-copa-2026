@@ -1,92 +1,24 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useBetsStore } from '../store/betsStore';
 import { useTournamentStore } from '../store/tournamentStore';
-import { supabase, isSupabaseConfigured, sq, drainOutbox, ensureServerWarm } from '../lib/supabase';
-import type { Profile } from '../types/index';
-
-const PROFILES_CACHE = 'bolao-profiles-cache';
-
-/**
- * Busca todos os perfis do servidor com retry (até 3 tentativas, backoff).
- * Em caso de falha total, retorna o cache local (se existir).
- *
- * Extraída do componente para poder ser reutilizada sem depender de hooks —
- * é chamada tanto no mount quanto no botão de atualizar.
- */
-async function fetchProfiles(): Promise<Profile[]> {
-  if (!isSupabaseConfigured) return [];
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const { data, error } = await sq(
-      () => supabase.from('profiles').select('*'),
-      attempt === 1 ? 8000 : 14000,
-    );
-    if (!error && data?.length) {
-      const profiles = (data as Record<string, unknown>[]).map(r => ({
-        id:        r.id        as string,
-        username:  r.username  as string,
-        isAdmin:   (r.is_admin as boolean) ?? false,
-        createdAt: r.created_at as string,
-      }));
-      try { localStorage.setItem(PROFILES_CACHE, JSON.stringify(profiles)); } catch { /* ignore */ }
-      return profiles;
-    }
-    console.warn(`[leaderboard] profiles tentativa ${attempt}/3:`, error?.message);
-    if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
-  }
-
-  // Fallback: cache local
-  try {
-    const cached = localStorage.getItem(PROFILES_CACHE);
-    if (cached) return JSON.parse(cached) as Profile[];
-  } catch { /* ignore */ }
-  return [];
-}
+import { drainOutbox, ensureServerWarm } from '../lib/supabase';
+import type { LeaderboardEntry } from '../types/index';
 
 export function Leaderboard() {
-  const { profile } = useAuthStore();
-
-  // Assina o objeto `bets` do store de forma reativa: qualquer atualização
-  // (App.tsx via sessionChecked, Realtime, visibilitychange) causa re-render
-  // automático e re-cálculo do leaderboard — sem precisar de botão manual.
-  const bets            = useBetsStore(s => s.bets);
-  const getLeaderboard  = useBetsStore(s => s.getLeaderboard);
-  const fetchAllBets    = useBetsStore(s => s.fetchAllBets);
+  const { profile }      = useAuthStore();
+  const fetchLeaderboard = useBetsStore(s => s.fetchLeaderboard);
   const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
 
-  // Perfis carregados do servidor (fonte de verdade para a lista de participantes).
-  // Lazy init com cache local para exibição imediata enquanto o fetch corre.
-  const [profiles, setProfiles] = useState<Profile[]>(() => {
-    try {
-      const cached = localStorage.getItem(PROFILES_CACHE);
-      if (cached) return JSON.parse(cached) as Profile[];
-    } catch { /* ignore */ }
-    return [];
-  });
-
-  const [loading, setLoading]       = useState(false);
+  const [entries,    setEntries]    = useState<LeaderboardEntry[]>([]);
+  const [loading,    setLoading]    = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const mountedRef = useRef(true);
 
   /**
-   * Leaderboard reativo: recalcula automaticamente quando:
-   *   - `bets` muda (fetchAllBets, Realtime, visibilitychange)
-   *   - `profiles` muda (fetch no mount ou botão de atualizar)
-   *
-   * Fallback de profiles: mostra só o usuário logado enquanto os perfis
-   * carregam (nunca mostra lista vazia desnecessariamente).
+   * Busca dados frescos via RPC get_leaderboard() — servidor agrega tudo,
+   * devolve apenas N linhas (uma por usuário) em vez de N×72 linhas brutas.
    */
-  const entries = useMemo(
-    () => {
-      const p = profiles.length ? profiles : (profile ? [profile] : []);
-      return getLeaderboard(p);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [bets, profiles, getLeaderboard],
-  );
-
-  /** Busca dados frescos — bets, matches e profiles em paralelo. */
   const refresh = useCallback(async (showFullLoader = false) => {
     if (!mountedRef.current) return;
     if (showFullLoader) setLoading(true);
@@ -102,27 +34,26 @@ export function Leaderboard() {
       await drainOutbox();
       if (!mountedRef.current) return;
 
-      const [profilesResult] = await Promise.allSettled([
-        fetchProfiles(),
-        fetchAllBets(),      // atualiza bets store — entries recalcula via useMemo
-        syncFromSupabase(),  // atualiza resultados de jogos
+      // Busca leaderboard e resultados em paralelo
+      const [leaderboardResult] = await Promise.allSettled([
+        fetchLeaderboard(),
+        syncFromSupabase(),   // mantém resultados de jogos sincronizados
       ]);
 
       if (!mountedRef.current) return;
 
-      if (profilesResult.status === 'fulfilled' && profilesResult.value.length) {
-        setProfiles(profilesResult.value);
+      if (leaderboardResult.status === 'fulfilled' && leaderboardResult.value.length) {
+        setEntries(leaderboardResult.value);
       }
     } finally {
       if (mountedRef.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [fetchAllBets, syncFromSupabase]);
+  }, [fetchLeaderboard, syncFromSupabase]);
 
   useEffect(() => {
     mountedRef.current = true;
-    // Sem cache de profiles → mostra loader enquanto busca todos os participantes.
-    // Com cache → exibe imediatamente e atualiza em background (silent refresh).
-    const showFullLoader = profiles.length === 0;
+    // Sem entradas no state → mostra loader completo na primeira carga.
+    const showFullLoader = entries.length === 0;
     queueMicrotask(() => { if (mountedRef.current) refresh(showFullLoader); });
     return () => { mountedRef.current = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
