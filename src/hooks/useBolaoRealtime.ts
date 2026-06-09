@@ -67,7 +67,10 @@ export function useBolaoRealtime(profile: Profile | null): () => void {
           () => { syncFromSupabase(); }
         )
         .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'bets' },
+          // Filtro por user_id: só recebe eventos dos próprios palpites.
+          // Sem o filtro, o palpite de QUALQUER usuário dispara fetchMyBets
+          // em todos os clientes conectados — principal causa de egress excessivo.
+          { event: '*', schema: 'public', table: 'bets', filter: `user_id=eq.${profile.id}` },
           () => { fetchMyBets(profile.id); }
         )
         .on('postgres_changes',

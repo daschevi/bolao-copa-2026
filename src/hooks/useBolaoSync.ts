@@ -64,13 +64,20 @@ export function useBolaoSync(
     runSync();
 
     const retryTimer = setTimeout(async () => {
+      // Só re-sincroniza se o sync inicial ainda não completou (cold start > 15s)
+      // ou se o cache ficou stale por algum motivo. Se runSync() acima terminou
+      // com sucesso e chamou markSyncDone(), isSyncStale() retorna false e o
+      // retry vira no-op — sem queries extras na carga normal de página.
+      if (!profile || !isSyncStale(profile.id)) return;
+
       await wakeUpSupabase();
       await drainOutbox();
       await Promise.allSettled([
         syncFromSupabase(),
-        ...(profile ? [fetchMyBets(profile.id), syncPhaseSettings()] : []),
+        fetchMyBets(profile.id),
+        syncPhaseSettings(),
       ]);
-      if (profile) markSyncDone(profile.id);
+      markSyncDone(profile.id);
     }, 15000);
 
     return () => clearTimeout(retryTimer);
