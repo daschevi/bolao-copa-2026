@@ -318,12 +318,3 @@ export function AuditLog() {
     </div>
   );
 }
-a</p>
-          <p className="text-xs mt-1" style={{ color: '#4B5563' }}>
-            Os logs aparecem aqui assim que usuários realizarem ações no app.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}

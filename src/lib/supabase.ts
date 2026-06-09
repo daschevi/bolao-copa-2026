@@ -556,14 +556,3 @@ export function hasPendingOutboxOpForMatch(matchId: string): boolean {
     return false;
   });
 }
-dOutbox().some(op => {
-    if (op.kind === 'upsert') {
-      return op.table === 'match_results' && op.payload.match_id === matchId;
-    }
-    return op.table === 'match_results' && op.match.column === 'match_id' && op.match.value === matchId;
-  });
-}
-    }
-    return false;
-  });
-}
