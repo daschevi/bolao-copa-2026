@@ -129,8 +129,14 @@ create policy "phase_settings_write"  on public.phase_settings for all
 create or replace function public.check_email_domain()
 returns trigger language plpgsql security definer as $$
 begin
-  if new.email is null or new.email not ilike '%@golfleet.com.br' then
-    raise exception 'Acesso restrito a colaboradores @golfleet.com.br';
+  if new.email is null
+     or (
+       new.email not ilike '%@golfleet.com.br'
+       and new.email not ilike '%@v3.com.br'
+       and new.email not ilike '%@parar.com.br'
+     )
+  then
+    raise exception 'Acesso restrito a colaboradores @golfleet.com.br, @v3.com.br ou @parar.com.br';
   end if;
   return new;
 end;

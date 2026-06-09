@@ -46,7 +46,7 @@ truncate table public.profiles restart identity cascade;
 -- ── 6. Usuários de autenticação ───────────────────────────────────────────────
 -- Apaga todos os logins (Google OAuth) registrados durante testes.
 -- O trigger check_email_domain_trigger permanece ativo — novos logins
--- continuam restritos a @golfleet.com.br.
+-- continuam restritos a @golfleet.com.br, @v3.com.br e @parar.com.br.
 delete from auth.users;
 
 -- Reabilita os triggers de auditoria para o ambiente de produção.

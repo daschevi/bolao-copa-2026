@@ -104,8 +104,14 @@ export function Login() {
 
           {/* Aviso de domínio */}
           <p className="text-center text-xs mt-4" style={{ color: '#374151' }}>
-            Exclusivo para colaboradores{' '}
+            Exclusivo para colaboradores
+          </p>
+          <p className="text-center text-xs mt-1 flex items-center justify-center flex-wrap gap-x-2 gap-y-0.5">
             <span style={{ color: '#8300ff' }}>@golfleet.com.br</span>
+            <span style={{ color: '#4B5563' }}>·</span>
+            <span style={{ color: '#8300ff' }}>@v3.com.br</span>
+            <span style={{ color: '#4B5563' }}>·</span>
+            <span style={{ color: '#8300ff' }}>@parar.com.br</span>
           </p>
         </div>
 

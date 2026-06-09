@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { supabase, isSupabaseConfigured, drainOutbox } from '../lib/supabase';
 import type { Profile } from '../types';
 
-const ALLOWED_DOMAIN = 'golfleet.com.br';
+const ALLOWED_DOMAINS = ['golfleet.com.br', 'v3.com.br', 'parar.com.br'];
 const SESSION_TOKEN_KEY = 'bolao-session-token';
 
 /**
@@ -101,8 +101,12 @@ function unsubscribeFromSessionRevocation(): void {
 }
 
 function isDomainAllowed(email: string | undefined): boolean {
-  return !!email?.toLowerCase().endsWith(`@${ALLOWED_DOMAIN}`);
+  if (!email) return false;
+  const lower = email.toLowerCase();
+  return ALLOWED_DOMAINS.some(d => lower.endsWith(`@${d}`));
 }
+
+const ALLOWED_DOMAINS_DISPLAY = ALLOWED_DOMAINS.map(d => `@${d}`).join(', ');
 
 // Converte linha do banco (snake_case) → Profile (camelCase)
 function rowToProfile(row: Record<string, unknown>): Profile {
@@ -291,7 +295,7 @@ export const useAuthStore = create<AuthState>()(
 
           if (!isDomainAllowed(session.user.email)) {
             await supabase.auth.signOut();
-            set({ profile: null, loading: false, error: `Acesso restrito a usuários @${ALLOWED_DOMAIN}`, sessionChecked: true });
+            set({ profile: null, loading: false, error: `Acesso restrito a colaboradores ${ALLOWED_DOMAINS_DISPLAY}`, sessionChecked: true });
             return;
           }
 
@@ -327,7 +331,7 @@ export const useAuthStore = create<AuthState>()(
               set({
                 profile: null,
                 loading: false,
-                error: `Acesso restrito a colaboradores @${ALLOWED_DOMAIN}`,
+                error: `Acesso restrito a colaboradores ${ALLOWED_DOMAINS_DISPLAY}`,
               });
               return;
             }
@@ -386,7 +390,9 @@ export const useAuthStore = create<AuthState>()(
           provider: 'google',
           options: {
             redirectTo,
-            queryParams: { hd: ALLOWED_DOMAIN },
+            // hd removido: com múltiplos domínios não há como pré-selecionar
+            // um único hint para o Google. A restrição real é feita por
+            // isDomainAllowed() no callback e pelo trigger check_email_domain no BD.
           },
         });
         if (error) set({ error: error.message, loading: false });
