@@ -102,15 +102,24 @@ export function MyBets() {
               const homeTeam = m.homeTeamId ? TEAMS_BY_ID[m.homeTeamId] : null;
               const awayTeam = m.awayTeamId ? TEAMS_BY_ID[m.awayTeamId] : null;
               return (
-                <div key={b.matchId} className="card flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                    {homeTeam && <Flag code={homeTeam.code} name={homeTeam.name} size="sm" />}
-                    <span className="text-xs text-gray-300 truncate">{homeTeam?.name ?? 'TBD'}</span>
-                    <span className="text-gray-500 text-sm shrink-0">vs</span>
-                    <span className="text-xs text-gray-300 truncate">{awayTeam?.name ?? 'TBD'}</span>
-                    {awayTeam && <Flag code={awayTeam.code} name={awayTeam.name} size="sm" />}
+                <div key={b.matchId} className="card">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      {homeTeam && <Flag code={homeTeam.code} name={homeTeam.name} size="sm" />}
+                      <span className="text-xs text-gray-300 truncate">{homeTeam?.name ?? 'TBD'}</span>
+                      <span className="text-gray-500 text-sm shrink-0">vs</span>
+                      <span className="text-xs text-gray-300 truncate">{awayTeam?.name ?? 'TBD'}</span>
+                      {awayTeam && <Flag code={awayTeam.code} name={awayTeam.name} size="sm" />}
+                    </div>
+                    <div className="text-sm font-medium text-copa-green shrink-0 whitespace-nowrap">{b.homeScore}×{b.awayScore}</div>
                   </div>
-                  <div className="text-sm font-medium text-copa-green shrink-0 whitespace-nowrap">{b.homeScore}×{b.awayScore}</div>
+                  {/* Palpite que falhou em subir ao servidor — orienta reenvio.
+                      O botão de reenvio em um toque fica no card da aba Grupos/Chaveamento. */}
+                  {b.persistFailed && (
+                    <div className="text-[11px] mt-1.5 font-semibold" style={{ color: '#f59e0b' }}>
+                      ⚠️ Este palpite não foi salvo no servidor. Reabra o jogo na aba Grupos/Chaveamento e toque em reenviar.
+                    </div>
+                  )}
                 </div>
               );
             })}

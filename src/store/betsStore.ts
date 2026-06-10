@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase, isSupabaseConfigured, sq, persistOp } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, sq, persistOp, hasPendingOutboxOpForBet } from '../lib/supabase';
 import type { Bet, LeaderboardEntry } from '../types';
 import { calcPoints } from '../types';
 import { useTournamentStore } from './tournamentStore';
@@ -21,8 +21,14 @@ interface BetsState {
    * Chama a RPC get_leaderboard() no servidor: devolve N linhas já agregadas
    * (uma por usuário) em vez de N×72 linhas brutas.
    * Usada exclusivamente pela página Leaderboard.tsx.
+   *
+   * Retorna:
+   *   - LeaderboardEntry[] (inclusive vazio) → sucesso; [] é vazio LEGÍTIMO
+   *     (início do bolão / reset) e a UI deve refletir.
+   *   - null → falha após retries; a UI deve PRESERVAR as entradas atuais
+   *     (não apagar a classificação por uma falha de rede transitória).
    */
-  fetchLeaderboard: () => Promise<LeaderboardEntry[]>;
+  fetchLeaderboard: () => Promise<LeaderboardEntry[] | null>;
 }
 
 export const useBetsStore = create<BetsState>()(
@@ -150,10 +156,11 @@ export const useBetsStore = create<BetsState>()(
             Object.entries(dbBets).forEach(([key, dbBet]) => {
               const localBet = state.bets[key];
               if (localBet?.pendingPersist) {
-                // BD chegou ao mesmo estado → limpa flag de pendência
+                // BD chegou ao mesmo estado → limpa pendência E qualquer falha
+                // anterior (o palpite efetivamente subiu — não mostrar reenvio).
                 if (localBet.homeScore === dbBet.homeScore &&
                     localBet.awayScore === dbBet.awayScore) {
-                  merged[key] = { ...localBet, pendingPersist: false };
+                  merged[key] = { ...localBet, pendingPersist: false, persistFailed: false };
                 } else {
                   // Usuário editou enquanto o save estava em voo — mantém local
                   // (será re-enviada pelo persistOp original ou pela reconciliação)
@@ -161,14 +168,23 @@ export const useBetsStore = create<BetsState>()(
                 }
                 return;
               }
+              // BD é fonte da verdade: a versão confirmada nunca está em falha.
               merged[key] = dbBet;
             });
 
-            // 2. Preserva bets pendentes do usuário que ainda não chegaram ao banco
-            //    (serão reconciliadas logo abaixo)
+            // 2. Bets pendentes do usuário ausentes no banco.
             Object.entries(state.bets).forEach(([key, bet]) => {
               if (bet.userId === userId && bet.pendingPersist && !merged[key]) {
-                merged[key] = bet;
+                // Auditoria retroativa de órfãs: pendente, ausente no BD e SEM op
+                // na outbox → foi descartada num drain anterior (inclusive antes
+                // deste deploy, quando o descarte era silencioso). Marca falha
+                // para a UI expor o reenvio em vez do spinner eterno.
+                if (!hasPendingOutboxOpForBet(bet.userId, bet.matchId)) {
+                  merged[key] = { ...bet, pendingPersist: false, persistFailed: true };
+                } else {
+                  // Ainda há op na outbox → será reconciliada logo abaixo.
+                  merged[key] = bet;
+                }
               }
             });
 
@@ -217,7 +233,7 @@ export const useBetsStore = create<BetsState>()(
         console.error('[betsStore] fetchMyBets falhou após 3 tentativas');
       },
 
-      fetchLeaderboard: async (): Promise<LeaderboardEntry[]> => {
+      fetchLeaderboard: async (): Promise<LeaderboardEntry[] | null> => {
         if (!isSupabaseConfigured) return [];
 
         for (let attempt = 1; attempt <= 3; attempt++) {
@@ -255,9 +271,30 @@ export const useBetsStore = create<BetsState>()(
         }
 
         console.error('[betsStore] fetchLeaderboard falhou após 3 tentativas');
-        return [];
+        return null; // falha → caller preserva entradas atuais
       },
     }),
     { name: 'bolao-bets', partialize: (s) => ({ bets: s.bets }) }
   )
 );
+
+// Marca bets como persistFailed quando a op correspondente é descartada da
+// outbox (MAX_ATTEMPTS / schema / deadline). Sem isso, pendingPersist fica preso
+// e a UI mostra "sincronizando…" para um palpite que nunca chegará ao servidor.
+if (typeof window !== 'undefined') {
+  window.addEventListener('outbox:op-discarded', (e: Event) => {
+    const op = (e as CustomEvent).detail;
+    if (op?.table !== 'bets' || op?.kind !== 'upsert') return;
+    const key = `${op.payload.user_id}-${op.payload.match_id}`;
+    useBetsStore.setState(state => {
+      const existing = state.bets[key];
+      if (!existing?.pendingPersist) return state;
+      return {
+        bets: {
+          ...state.bets,
+          [key]: { ...existing, pendingPersist: false, persistFailed: true },
+        },
+      };
+    });
+  });
+}

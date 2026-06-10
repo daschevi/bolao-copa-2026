@@ -61,11 +61,19 @@ export interface Bet {
   points?: number | null;
   /**
    * Flag local apenas — true enquanto a escrita no Supabase não confirmou.
-   * Quando true, `fetchAllBets` NÃO sobrescreve esta bet com a versão do BD
+   * Quando true, `fetchMyBets` NÃO sobrescreve esta bet com a versão do BD
    * (que ainda não a tem). Limpada pelo callback de sucesso do `persistOp`.
    * Nunca é enviada ao Supabase.
    */
   pendingPersist?: boolean;
+  /**
+   * Flag local apenas — true quando a persistência foi definitivamente
+   * abandonada (op descartada da outbox após MAX_ATTEMPTS, erro de schema/
+   * deadline, ou bet pendente órfã sem op correspondente na outbox). A UI deve
+   * mostrar erro com ação de reenvio em vez do spinner de sincronização.
+   * Nunca enviada ao Supabase.
+   */
+  persistFailed?: boolean;
 }
 
 export interface LeaderboardEntry {

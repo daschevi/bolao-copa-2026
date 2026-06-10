@@ -167,6 +167,16 @@ export function MatchCard({ match, showBet = true }: Props) {
     saveBet(profile.id, match.id, home, away);
   };
 
+  // Reenvio de um palpite que falhou definitivamente (persistFailed). Reusa os
+  // scores já guardados na bet local — saveBet reconstrói o objeto do zero,
+  // zerando persistFailed e remarcando pendingPersist até o BD confirmar.
+  const handleResendBet = async () => {
+    if (!profile || !userBet) return;
+    const sessionOk = await checkConnectionOrLogout();
+    if (!sessionOk) return;
+    saveBet(profile.id, match.id, userBet.homeScore, userBet.awayScore);
+  };
+
   const handleSaveResult = async () => {
     if (!isAdmin) return;
     // Mesma razão do handleSaveBet — refresh ativo evita RLS-block silencioso
@@ -299,6 +309,18 @@ export function MatchCard({ match, showBet = true }: Props) {
               {userBet.pendingPersist && (
                 <div className="text-[10px] mt-0.5 animate-pulse" style={{ color: '#9CA3AF' }}>
                   ⟳ sincronizando…
+                </div>
+              )}
+              {/* Falha definitiva: palpite nunca chegou ao servidor. Estado
+                  distinto do spinner, com ação de reenvio em um toque.
+                  stopPropagation impede que o clique abra o modal do card. */}
+              {userBet.persistFailed && !userBet.pendingPersist && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); handleResendBet(); }}
+                  className="text-[10px] mt-0.5 font-semibold cursor-pointer"
+                  style={{ color: '#f59e0b' }}
+                >
+                  ⚠️ Não foi salvo — toque para reenviar
                 </div>
               )}
             </>

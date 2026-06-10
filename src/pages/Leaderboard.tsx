@@ -42,7 +42,12 @@ export function Leaderboard() {
 
       if (!mountedRef.current) return;
 
-      if (leaderboardResult.status === 'fulfilled' && leaderboardResult.value.length) {
+      // Aceita lista vazia LEGÍTIMA (início do bolão / reset) — antes a guarda
+      // `&& value.length` mantinha entradas antigas após um reset. Mas distingue
+      // de falha: fetchLeaderboard retorna null quando esgota os retries, e aí
+      // preservamos as entradas atuais (não apagar a classificação por um blip
+      // de rede). value === [] limpa; value === null mantém.
+      if (leaderboardResult.status === 'fulfilled' && leaderboardResult.value !== null) {
         setEntries(leaderboardResult.value);
       }
     } finally {

@@ -164,6 +164,28 @@ function isSchemaError(msg: string): boolean {
 }
 
 /**
+ * Erro de prazo de palpite vindo do trigger/policy do servidor (BET_DEADLINE).
+ * Irrecuperável: re-tentar é inútil, o prazo não volta. Trata-se como descarte
+ * definitivo — a op sai da outbox e a bet é marcada com persistFailed.
+ */
+function isDeadlineError(msg: string): boolean {
+  return (msg ?? '').includes('BET_DEADLINE');
+}
+
+/**
+ * Notifica os stores que uma op foi descartada definitivamente da outbox
+ * (MAX_ATTEMPTS, erro de schema ou de deadline). Usa CustomEvent no window
+ * para não criar dependência circular lib → store. O betsStore escuta para
+ * marcar a bet correspondente com persistFailed=true, evitando que a UI
+ * mostre "sincronizando…" eternamente para um palpite que nunca subirá.
+ */
+function notifyOpDiscarded(op: OutboxOp): void {
+  try {
+    window.dispatchEvent(new CustomEvent('outbox:op-discarded', { detail: op }));
+  } catch { /* ambiente sem window (testes) — ignora */ }
+}
+
+/**
  * RLS-block. **Pode ser** efeito colateral de sessão expirada silenciosamente:
  * quando o JWT está stale, o Postgres trata o request como anônimo,
  * `auth.uid()` vira null e qualquer policy `auth.uid() = user_id` falha — não
@@ -360,10 +382,14 @@ export async function persistOp(
         return;
       }
       lastErrorMsg = result.error.message;
-      // Schema irrecuperável: descarta imediatamente
-      if (isSchemaError(lastErrorMsg)) {
+      // Irrecuperável (schema inexistente ou prazo encerrado): descarta imediatamente.
+      // notifyOpDiscarded garante que a bet seja marcada com persistFailed mesmo
+      // que a closure do onSuccess já tenha morrido — a UI mostra o reenvio.
+      if (isSchemaError(lastErrorMsg) || isDeadlineError(lastErrorMsg)) {
+        const reason = isDeadlineError(lastErrorMsg) ? 'prazo encerrado' : 'erro de schema';
+        notifyOpDiscarded({ ...input, id, attempts: attempt, createdAt: Date.now() } as OutboxOp);
         removeFromOutbox(id);
-        console.error(`[${label}] erro de schema, descartando da outbox:`, lastErrorMsg);
+        console.error(`[${label}] ${reason}, descartando da outbox:`, lastErrorMsg);
         onError?.(lastErrorMsg);
         return;
       }
@@ -460,10 +486,12 @@ export async function drainOutbox(): Promise<void> {
         if (!retryResult.error) {
           removeFromOutbox(op.id);
           console.log(`[outbox:${op.label}] reenviado com sucesso após refresh`);
-        } else if (isSchemaError(retryResult.error.message)) {
-          // Schema irrecuperável — descarta
+        } else if (isSchemaError(retryResult.error.message) || isDeadlineError(retryResult.error.message)) {
+          // Irrecuperável (schema ou prazo encerrado) — descarta + notifica
+          const reason = isDeadlineError(retryResult.error.message) ? 'prazo encerrado' : 'erro de schema';
+          notifyOpDiscarded(op);
           removeFromOutbox(op.id);
-          console.error(`[outbox:${op.label}] erro de schema após refresh, descartando:`, retryResult.error.message);
+          console.error(`[outbox:${op.label}] ${reason} após refresh, descartando:`, retryResult.error.message);
         } else if (isRlsError(retryResult.error.message)) {
           // RLS após refresh — pode ser race de boot; mantém na outbox para próximo drain
           bumpAttempts(op.id);
@@ -481,6 +509,7 @@ export async function drainOutbox(): Promise<void> {
     for (const op of ops) {
       if (op.attempts >= MAX_ATTEMPTS) {
         console.warn(`[outbox:${op.label}] descartando após ${op.attempts} tentativas`);
+        notifyOpDiscarded(op);
         removeFromOutbox(op.id);
         continue;
       }
@@ -494,10 +523,12 @@ export async function drainOutbox(): Promise<void> {
         if (!result.error) {
           removeFromOutbox(op.id);
           console.log(`[outbox:${op.label}] reenviado com sucesso`);
-        } else if (isSchemaError(result.error.message)) {
-          // Schema irrecuperável: descarta
+        } else if (isSchemaError(result.error.message) || isDeadlineError(result.error.message)) {
+          // Irrecuperável (schema ou prazo encerrado): descarta + notifica
+          const reason = isDeadlineError(result.error.message) ? 'prazo encerrado' : 'erro de schema';
+          notifyOpDiscarded(op);
           removeFromOutbox(op.id);
-          console.error(`[outbox:${op.label}] erro de schema, descartando:`, result.error.message);
+          console.error(`[outbox:${op.label}] ${reason}, descartando:`, result.error.message);
         } else if (isJwtExpiredError(result.error.message)) {
           // JWT expirado explícito
           if (tokenRefreshedThisRun) {
@@ -569,4 +600,14 @@ export function hasPendingOutboxOpForMatch(matchId: string): boolean {
     }
     return false;
   });
+}
+
+/** True se há op de upsert pendente na outbox para o palpite (userId, matchId). */
+export function hasPendingOutboxOpForBet(userId: string, matchId: string): boolean {
+  return readOutbox().some(op =>
+    op.table === 'bets' &&
+    op.kind === 'upsert' &&
+    op.payload.user_id === userId &&
+    op.payload.match_id === matchId
+  );
 }

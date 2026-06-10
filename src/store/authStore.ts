@@ -344,6 +344,23 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
+          // Perfil já carregado para este usuário (boot duplicado
+          // INITIAL_SESSION / SIGNED_IN, ou o getSession do initAuth já
+          // resolveu) — atualiza só o timestamp e garante o claim + canal de
+          // revogação (ambos idempotentes). Evita a query duplicada em profiles
+          // no caminho crítico do boot (antes: 2-3 SELECTs por inicialização).
+          if (get().profile?.id === session.user.id) {
+            set({ sessionExpiresAt: session.expires_at ?? null });
+            if (event === 'SIGNED_IN' && !localStorage.getItem(SESSION_TOKEN_KEY)) {
+              await claimSession(session.user.id);
+            }
+            subscribeToSessionRevocation(session.user.id, async () => {
+              await get().logout();
+              set({ sessionExpiredMessage: 'Sua sessão foi encerrada porque você entrou em outro dispositivo.' });
+            });
+            return;
+          }
+
           const profile = await fetchOrCreateProfile(
             session.user.id,
             session.user.user_metadata ?? {},
