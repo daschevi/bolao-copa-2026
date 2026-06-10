@@ -45,40 +45,52 @@ function parseDeadline(s: string): Date | null {
 }
 
 /**
- * Retorna true se o prazo de palpite ainda está aberto.
- * Se a fase tiver prazo fixo (phaseDeadline), usa ele; caso contrário usa 3 dias antes do jogo.
+ * Prazo efetivo de palpite — paridade EXATA com o trigger do servidor
+ * (check_bet_deadline, migration 010):
+ *   least(deadline explícito da fase ?? kickoff − 3 dias, kickoff)
+ *
+ * O kickoff é teto ABSOLUTO: nunca aceita palpite com a bola rolando, mesmo
+ * que o admin configure um deadline da fase posterior ao início do jogo. O
+ * explícito pode antecipar OU estender a janela em relação ao automático
+ * (3 dias antes), mas jamais ultrapassa o kickoff.
+ *
+ * Retorna o instante (ms) em que os palpites fecham, ou:
+ *   - 'closed' → fase explicitamente encerrada (phaseDeadline === '')
+ *   - null     → sem referência de prazo (jogo sem data e sem deadline legível) → fail-open
  */
-function isBetOpen(match: Match, phaseDeadline: string | null): boolean {
-  if (phaseDeadline !== null) {
-    if (!phaseDeadline) return false; // string vazia = encerrado
-    const deadline = parseDeadline(phaseDeadline);
-    // Se o valor não é legível, prefere fail-open para não bloquear injustamente.
-    if (!deadline) return true;
-    return new Date() <= deadline;
+function effectiveDeadlineMs(match: Match, phaseDeadline: string | null): number | 'closed' | null {
+  if (phaseDeadline !== null && !phaseDeadline) return 'closed';
+
+  const kickoff = match.date
+    ? new Date(`${match.date}T${match.time ?? '00:00'}:00-03:00`)
+    : null;
+
+  // Candidato: deadline explícito da fase (se legível) OU automático (kickoff − 3 dias).
+  let candidate: Date | null = phaseDeadline ? parseDeadline(phaseDeadline) : null;
+  if (!candidate && kickoff) {
+    candidate = new Date(kickoff.getTime() - BET_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
   }
-  if (!match.date) return true;
-  const time = match.time ?? '00:00';
-  const matchAt = new Date(`${match.date}T${time}:00-03:00`);
-  const deadline = new Date(matchAt.getTime() - BET_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
-  return new Date() <= deadline;
+  if (!candidate) return null; // sem data e sem deadline legível → fail-open
+
+  // Teto absoluto do kickoff.
+  return kickoff ? Math.min(candidate.getTime(), kickoff.getTime()) : candidate.getTime();
+}
+
+/** Retorna true se o prazo de palpite ainda está aberto (idêntico ao servidor). */
+function isBetOpen(match: Match, phaseDeadline: string | null): boolean {
+  const eff = effectiveDeadlineMs(match, phaseDeadline);
+  if (eff === 'closed') return false;
+  if (eff === null) return true; // fail-open: nada para validar
+  return Date.now() <= eff;
 }
 
 /** Formata quantos dias/horas faltam para o prazo de palpite. */
 function deadlineLabel(match: Match, phaseDeadline: string | null): string {
-  let deadlineDate: Date | null;
+  const eff = effectiveDeadlineMs(match, phaseDeadline);
+  if (eff === 'closed') return 'Palpites encerrados';
+  if (eff === null) return '';
 
-  if (phaseDeadline !== null) {
-    if (!phaseDeadline) return 'Palpites encerrados';
-    deadlineDate = parseDeadline(phaseDeadline);
-    if (!deadlineDate) return ''; // ilegível: não mostra contador
-  } else {
-    if (!match.date) return '';
-    const time = match.time ?? '00:00';
-    const matchAt = new Date(`${match.date}T${time}:00-03:00`);
-    deadlineDate = new Date(matchAt.getTime() - BET_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
-  }
-
-  const diff = deadlineDate.getTime() - Date.now();
+  const diff = eff - Date.now();
   if (diff <= 0) return 'Palpites encerrados';
   const days    = Math.floor(diff / (1000 * 60 * 60 * 24));
   const hours   = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));

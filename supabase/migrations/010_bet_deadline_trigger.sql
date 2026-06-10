@@ -5,6 +5,8 @@
 --
 --   • Deadline explícito da fase (phase_settings.bets_deadline) tem PRECEDÊNCIA.
 --   • Sem deadline explícito → regra automática: kickoff do jogo − 3 dias.
+--   • O kickoff é TETO ABSOLUTO: nem o deadline explícito reabre palpite com a
+--     bola rolando → least(deadline ?? kickoff−3d, kickoff).
 --   • Mesma regra para admin e usuário comum (consistente com a migration 007).
 --
 -- Por que esta migration existe (e substitui 004/007):
@@ -169,16 +171,18 @@ begin
     raise exception 'BET_DEADLINE: partida sem metadados (%).', new.match_id;
   end if;
 
-  -- Deadline explícito da fase (definido pelo admin) tem PRECEDÊNCIA.
-  -- Sem ele → regra automática: 3 dias antes do kickoff (igual ao cliente).
+  -- Deadline explícito da fase (definido pelo admin) tem PRECEDÊNCIA sobre a
+  -- regra automática (kickoff − 3 dias), MAS o kickoff é teto ABSOLUTO: nunca
+  -- aceitar palpite com a bola rolando, mesmo que o admin configure um deadline
+  -- da fase posterior ao início do jogo. O explícito pode antecipar ou estender
+  -- a janela, jamais ultrapassar o kickoff.
   select bets_deadline into v_deadline
     from public.phase_settings where stage = v_stage;
 
-  if v_deadline is not null then
-    v_effective := v_deadline;
-  else
-    v_effective := v_kickoff - interval '3 days';
-  end if;
+  v_effective := least(
+    coalesce(v_deadline, v_kickoff - interval '3 days'),
+    v_kickoff
+  );
 
   if now() > v_effective then
     raise exception 'BET_DEADLINE: prazo de palpites encerrado.';

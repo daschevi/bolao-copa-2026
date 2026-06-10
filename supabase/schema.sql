@@ -77,7 +77,8 @@ create policy "bets_select" on public.bets for select using (auth.uid() is not n
 -- INSERT e UPDATE verificam APENAS autoria aqui. O PRAZO de palpite é validado
 -- pelo trigger trg_check_bet_deadline (migration 010), que conhece o kickoff
 -- real de cada jogo (tabela match_meta) e replica a regra do cliente:
--- deadline explícito da fase tem precedência; sem ele, kickoff − 3 dias.
+-- least(deadline explícito da fase ?? kickoff − 3 dias, kickoff) — o kickoff é
+-- teto absoluto, nem o deadline explícito reabre palpite com a bola rolando.
 -- ⚠️ Aplicar a migration 010 é OBRIGATÓRIO — sem ela não há validação de prazo.
 create policy "bets_insert" on public.bets for insert
   with check (auth.uid() = user_id);
