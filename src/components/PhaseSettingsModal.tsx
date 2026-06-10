@@ -8,6 +8,33 @@ import { useTournamentStore } from '../store/tournamentStore';
 
 interface Props { onClose: () => void }
 
+/**
+ * Converte o valor salvo de betsDeadline para o formato que o
+ * `<input type="datetime-local">` exige: `YYYY-MM-DDTHH:mm` (sem segundos,
+ * sem fuso), sempre no horário de Brasília.
+ *
+ * Necessário porque o banco devolve o ISO completo (`2026-06-10T23:59:00-03:00`)
+ * — formato que o input NÃO renderiza, deixando o campo em branco mesmo com
+ * valor salvo. Aceita os dois casos:
+ *   • Com fuso (Z ou ±HH:mm)  → converte o instante para BRT e formata curto.
+ *   • Sem fuso (formato curto) → usa os 16 primeiros chars direto.
+ */
+function toDatetimeLocal(s: string | null): string {
+  if (!s) return '';
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(s);
+  if (!hasTz) return s.slice(0, 16); // já é local curto (BRT)
+
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s.slice(0, 16);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d);
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+}
+
 export function PhaseSettingsModal({ onClose }: Props) {
   const { phases, updatePhase, savePhaseSettings, syncPhaseSettings } = usePhaseSettingsStore();
   const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
@@ -193,7 +220,7 @@ function PhaseRow({
         {hasCustomDeadline && (
           <input
             type="datetime-local"
-            value={config.betsDeadline ?? ''}
+            value={toDatetimeLocal(config.betsDeadline)}
             onChange={e => onChange({ betsDeadline: e.target.value || null })}
             className="input text-xs mt-1"
           />
