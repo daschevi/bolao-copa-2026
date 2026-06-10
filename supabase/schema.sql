@@ -74,35 +74,15 @@ create policy "profiles_update" on public.profiles
 -- Sem policy de DELETE intencional — palpite feito não pode ser cancelado.
 -- Se cancelamento for necessário no futuro, adicionar policy aqui.
 create policy "bets_select" on public.bets for select using (auth.uid() is not null);
--- INSERT e UPDATE verificam autoria + prazo da fase via match_id_to_stage().
--- Admin bypassa o prazo. Fase sem deadline → fail-open (libera).
--- Ver migration 004 para a função match_id_to_stage e a lógica completa.
+-- INSERT e UPDATE verificam APENAS autoria aqui. O PRAZO de palpite é validado
+-- pelo trigger trg_check_bet_deadline (migration 010), que conhece o kickoff
+-- real de cada jogo (tabela match_meta) e replica a regra do cliente:
+-- deadline explícito da fase tem precedência; sem ele, kickoff − 3 dias.
+-- ⚠️ Aplicar a migration 010 é OBRIGATÓRIO — sem ela não há validação de prazo.
 create policy "bets_insert" on public.bets for insert
-  with check (
-    auth.uid() = user_id
-    and (
-      exists (select 1 from public.profiles where id = auth.uid() and is_admin = true)
-      or not exists (
-        select 1 from public.phase_settings ps
-        where ps.stage = public.match_id_to_stage(new.match_id)
-          and ps.bets_deadline is not null
-          and now() > ps.bets_deadline
-      )
-    )
-  );
+  with check (auth.uid() = user_id);
 create policy "bets_update" on public.bets for update
-  using (
-    auth.uid() = user_id
-    and (
-      exists (select 1 from public.profiles where id = auth.uid() and is_admin = true)
-      or not exists (
-        select 1 from public.phase_settings ps
-        where ps.stage = public.match_id_to_stage(match_id)
-          and ps.bets_deadline is not null
-          and now() > ps.bets_deadline
-      )
-    )
-  );
+  using (auth.uid() = user_id);
 
 -- Match results: apenas usuários autenticados podem ler.
 create policy "results_select" on public.match_results for select using (auth.uid() is not null);
