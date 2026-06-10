@@ -12,7 +12,7 @@ import { useAuthStore } from './store/authStore';
 import { useTournamentStore } from './store/tournamentStore';
 import { useBetsStore } from './store/betsStore';
 import { usePhaseSettingsStore } from './store/phaseSettingsStore';
-import { supabase, isSupabaseConfigured, drainOutbox, wakeUpSupabase, getOutboxSize } from './lib/supabase';
+import { isSupabaseConfigured, drainOutbox, wakeUpSupabase, getOutboxSize } from './lib/supabase';
 import { useBolaoSync, isSyncStale, markSyncDone } from './hooks/useBolaoSync';
 import { useBolaoRealtime } from './hooks/useBolaoRealtime';
 import { useSessionToast } from './hooks/useSessionToast';
@@ -56,41 +56,50 @@ export default function App() {
   // Renova JWT + verifica se o cache expirou antes de re-buscar os dados.
   useEffect(() => {
     if (!profile) return;
+    // single-flight: visibilitychange e pageshow frequentemente disparam juntos.
+    // Sem este guard, o handler rodava 2-3x em paralelo, multiplicando syncs,
+    // refreshes e disputas pelo lock de auth (visível nos logs como rajadas de
+    // timeout concorrentes). inFlight descarta os disparos sobrepostos.
+    let inFlight = false;
     const onVisible = async () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible' || inFlight) return;
+      inFlight = true;
+      try {
+        // 1. Verifica/renova sessão; se refresh token expirou, faz logout + toast.
+        const sessionOk = await checkConnectionOrLogout();
+        if (!sessionOk) return;
 
-      // 1. Verifica/renova sessão; se refresh token expirou, faz logout + toast.
-      const sessionOk = await checkConnectionOrLogout();
-      if (!sessionOk) return;
+        // 2. Cache expirado (> 1h): descarta bets locais não-pendentes antes de re-buscar.
+        if (isSyncStale(profile.id)) {
+          console.log('[sync] cache expirado (> 1h) — descartando bets locais antes do re-sync');
+          useBetsStore.setState(state => ({
+            bets: Object.fromEntries(
+              Object.entries(state.bets).filter(([, bet]) => bet.pendingPersist)
+            ),
+          }));
+        }
 
-      // 2. Cache expirado (> 1h): descarta bets locais não-pendentes antes de re-buscar.
-      if (isSyncStale(profile.id)) {
-        console.log('[sync] cache expirado (> 1h) — descartando bets locais antes do re-sync');
-        useBetsStore.setState(state => ({
-          bets: Object.fromEntries(
-            Object.entries(state.bets).filter(([, bet]) => bet.pendingPersist)
-          ),
-        }));
+        // 3. Verifica canal Realtime imediatamente em vez de esperar próximo tick.
+        reconnectRealtime();
+
+        // 4. Wake-up cobre hibernação do free tier durante background.
+        await wakeUpSupabase();
+
+        // 4b. Verifica sessão única — se outro device fez login, sai sem sincronizar.
+        await verifySessionOwnership();
+        if (!useAuthStore.getState().profile) return;
+
+        // 5. Drena outbox e re-sincroniza tudo.
+        await drainOutbox();
+        await Promise.allSettled([
+          syncFromSupabase(),
+          fetchMyBets(profile.id),
+          syncPhaseSettings(),
+        ]);
+        markSyncDone(profile.id);
+      } finally {
+        inFlight = false;
       }
-
-      // 3. Verifica canal Realtime imediatamente em vez de esperar próximo tick.
-      reconnectRealtime();
-
-      // 4. Wake-up cobre hibernação do free tier durante background.
-      await wakeUpSupabase();
-
-      // 4b. Verifica sessão única — se outro device fez login, sai sem sincronizar.
-      await verifySessionOwnership();
-      if (!useAuthStore.getState().profile) return;
-
-      // 5. Drena outbox e re-sincroniza tudo.
-      await drainOutbox();
-      await Promise.allSettled([
-        syncFromSupabase(),
-        fetchMyBets(profile.id),
-        syncPhaseSettings(),
-      ]);
-      markSyncDone(profile.id);
     };
     // `pageshow` é equivalente a `visibilitychange` para o caso de "voltar
     // do bfcache" do navegador. No Chrome Android, em certas situações
@@ -160,26 +169,19 @@ export default function App() {
   // Keepalive a cada 4 min — TODAS as tarefas periódicas de background rodam
   // num único timer mestre. Responsabilidades nesta ordem:
   //   1) wakeUpSupabase()      — mantém o free tier acordado (evita cold start)
-  //   2) refreshSession()      — renova JWT proativamente para abas eternamente abertas
-  //   3) verifySessionOwnership() — single-device login enforcement
-  //   4) reconnectRealtime()   — checa canal e reconecta se caiu silenciosamente
+  //   2) verifySessionOwnership() — single-device login enforcement
+  //   3) reconnectRealtime()   — checa canal e reconecta se caiu silenciosamente
+  //
+  // NÃO chamamos refreshSession() aqui: o autoRefreshToken: true do client já
+  // renova o JWT sozinho (inclusive em abas abertas há horas). O refresh manual
+  // periódico era redundante e mais uma fonte de rotação de refresh token +
+  // disputa do lock interno de auth — possível causa de travamentos.
   useEffect(() => {
     if (!profile || !isSupabaseConfigured) return;
     const keepalive = setInterval(async () => {
-      await wakeUpSupabase();
-      try {
-        const { error } = await supabase.auth.refreshSession();
-        if (error) {
-          console.warn('[keepalive] refresh falhou:', error.message);
-          checkConnectionOrLogout();
-        } else {
-          console.log('[keepalive] servidor pingado + sessão renovada');
-        }
-      } catch (e) {
-        console.warn('[keepalive] exceção:', e);
-      }
-      verifySessionOwnership();
-      reconnectRealtime();
+      await wakeUpSupabase();          // mantém o free tier acordado
+      verifySessionOwnership();        // single-device login
+      reconnectRealtime();             // checa canal e reconecta se caiu
     }, 4 * 60 * 1000);
     return () => clearInterval(keepalive);
   }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps

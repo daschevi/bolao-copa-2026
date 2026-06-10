@@ -319,60 +319,73 @@ export const useAuthStore = create<AuthState>()(
           set({ sessionChecked: true });
         });
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(
-          async (event: string, session: import('@supabase/supabase-js').Session | null) => {
-            if (!session?.user) {
-              set({ profile: null, loading: false });
-              return;
-            }
+        // ── Handler async FORA do callback do onAuthStateChange ─────────────
+        // Roda via setTimeout(0): o callback síncrono retorna imediatamente,
+        // liberando o lock interno de auth (navigator.locks) ANTES de qualquer
+        // requisição de rede. Sem isso, um await em supabase.from(...) /
+        // signOut() / claimSession() dentro do callback deadlocka o app inteiro
+        // (toda query PostgREST espera esse mesmo lock no getSession interno).
+        const handleAuthEvent = async (
+          event: string,
+          session: import('@supabase/supabase-js').Session | null,
+        ) => {
+          if (!session?.user) {
+            set({ profile: null, loading: false });
+            return;
+          }
 
-            if (!isDomainAllowed(session.user.email)) {
-              await supabase.auth.signOut();
-              set({
-                profile: null,
-                loading: false,
-                error: `Acesso restrito a colaboradores ${ALLOWED_DOMAINS_DISPLAY}`,
-              });
-              return;
-            }
-
-            // TOKEN_REFRESHED: JWT renovado automaticamente — perfil já existe no store.
-            // Atualiza apenas sessionExpiresAt sem refazer a query ao banco.
-            // Sem esse atalho, fetchOrCreateProfile() bloquearia o update de sessionExpiresAt
-            // por até 15s no cold start do free tier, deixando o timestamp stale.
-            if (event === 'TOKEN_REFRESHED') {
-              set({ sessionExpiresAt: session.expires_at ?? null });
-              return;
-            }
-
-            const profile = await fetchOrCreateProfile(
-              session.user.id,
-              session.user.user_metadata ?? {},
-              session.user.email ?? '',
-            );
-            set({ profile, loading: false, error: null, sessionExpiresAt: session.expires_at ?? null });
-
-            // Sessão única por usuário: reclama token apenas em login NOVO,
-            // não em restauração de sessão de página (INITIAL_SESSION com
-            // localStorage já populado).
-            //   - SIGNED_IN sem token local → login fresh deste device
-            //   - SIGNED_IN com token local → recarregou aba, NÃO regenerar
-            //     (senão sobrescreveríamos o token de outro device que possa
-            //     ter feito login enquanto esta aba estava aberta)
-            if (event === 'SIGNED_IN') {
-              const existingToken = localStorage.getItem(SESSION_TOKEN_KEY);
-              if (!existingToken) {
-                await claimSession(session.user.id);
-              }
-            }
-
-            // Subscribe (idempotente) ao canal Realtime de revogação. Se já
-            // estamos assinados pra este userId, vira no-op. Cobre SIGNED_IN
-            // após login fresh e TOKEN_REFRESHED após restauração de sessão.
-            subscribeToSessionRevocation(session.user.id, async () => {
-              await get().logout();
-              set({ sessionExpiredMessage: 'Sua sessão foi encerrada porque você entrou em outro dispositivo.' });
+          if (!isDomainAllowed(session.user.email)) {
+            await supabase.auth.signOut();
+            set({
+              profile: null,
+              loading: false,
+              error: `Acesso restrito a colaboradores ${ALLOWED_DOMAINS_DISPLAY}`,
             });
+            return;
+          }
+
+          const profile = await fetchOrCreateProfile(
+            session.user.id,
+            session.user.user_metadata ?? {},
+            session.user.email ?? '',
+          );
+          set({ profile, loading: false, error: null, sessionExpiresAt: session.expires_at ?? null });
+
+          // Sessão única por usuário: reclama token apenas em login NOVO,
+          // não em restauração de sessão de página (INITIAL_SESSION com
+          // localStorage já populado).
+          //   - SIGNED_IN sem token local → login fresh deste device
+          //   - SIGNED_IN com token local → recarregou aba, NÃO regenerar
+          //     (senão sobrescreveríamos o token de outro device que possa
+          //     ter feito login enquanto esta aba estava aberta)
+          if (event === 'SIGNED_IN') {
+            const existingToken = localStorage.getItem(SESSION_TOKEN_KEY);
+            if (!existingToken) {
+              await claimSession(session.user.id);
+            }
+          }
+
+          // Subscribe (idempotente) ao canal Realtime de revogação. Se já
+          // estamos assinados pra este userId, vira no-op. Cobre SIGNED_IN
+          // após login fresh e TOKEN_REFRESHED após restauração de sessão.
+          subscribeToSessionRevocation(session.user.id, async () => {
+            await get().logout();
+            set({ sessionExpiredMessage: 'Sua sessão foi encerrada porque você entrou em outro dispositivo.' });
+          });
+        };
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(
+          (event: string, session: import('@supabase/supabase-js').Session | null) => {
+            // ⚠️ Este callback DEVE ser síncrono e retornar imediatamente.
+            // Ele é invocado com o lock interno de auth ainda em posse — qualquer
+            // await em chamada Supabase aqui dentro causa deadlock (docs oficiais).
+            // TOKEN_REFRESHED: só atualiza o timestamp, zero rede — pode ficar aqui.
+            if (event === 'TOKEN_REFRESHED') {
+              set({ sessionExpiresAt: session?.expires_at ?? null });
+              return;
+            }
+            // Todo o resto sai do ciclo do lock antes de executar.
+            setTimeout(() => { void handleAuthEvent(event, session); }, 0);
           }
         );
 
@@ -482,18 +495,23 @@ export const useAuthStore = create<AuthState>()(
         if (!isSupabaseConfigured) return true; // dev/CI sem .env — sempre ok
 
         try {
-          const { data, error } = await supabase.auth.refreshSession();
-          if (!error && data.session) {
-            // Propaga token renovado para o WebSocket do Realtime
+          // getSession() devolve a sessão do storage e SÓ faz refresh de rede
+          // se o access token estiver expirado. Reduz drasticamente a rotação
+          // de refresh tokens — antes era 1 refresh por clique de salvar palpite
+          // (via MatchCard) + 1 por visibilitychange, multiplicando a disputa
+          // pelo lock de auth e o risco de revogação por reuso de refresh token.
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            // Propaga token para o WebSocket do Realtime
             // (o auto-refresh HTTP não atualiza o WS automaticamente).
-            supabase.realtime.setAuth(data.session.access_token);
+            supabase.realtime.setAuth(session.access_token);
             // Atualiza timestamp para que checkConnection() continue síncrono e correto.
-            set({ sessionExpiresAt: data.session.expires_at ?? null });
+            set({ sessionExpiresAt: session.expires_at ?? null });
             return true;
           }
         } catch { /* fall through */ }
 
-        // Refresh token expirado ou inválido — sessão definitivamente morta.
+        // Sessão irrecuperável (refresh token morto) — sessão definitivamente morta.
         // Faz logout limpo antes de setar a mensagem para garantir que o
         // toast apareça após a limpeza de estado (evita flash de dados velhos).
         await get().logout();

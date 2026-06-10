@@ -12,6 +12,17 @@ export const supabase = isSupabaseConfigured
         persistSession:    true,   // mantém sessão no localStorage entre recargas
         detectSessionInUrl: true,  // captura o hash do redirect OAuth (PKCE)
       },
+      // Timeout de 20s em TODA requisição HTTP do Supabase, incluindo o
+      // refresh de token (que não tem timeout nativo). Sem isso, um refresh
+      // pendurado na rede corporativa segura o navigator.locks indefinidamente
+      // e congela todas as queries do app (que esperam o lock no getSession).
+      global: {
+        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+          fetch(input, {
+            ...init,
+            signal: init?.signal ?? AbortSignal.timeout(20_000),
+          }),
+      },
     })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   : (null as any);
@@ -416,21 +427,24 @@ export async function drainOutbox(): Promise<void> {
   const ops = readOutbox();
   if (ops.length === 0) return;
 
-  // Não verificamos a sessão via getSession() aqui — essa chamada usa o mutex
-  // interno do Supabase e bloquearia se visibilitychange estiver executando
-  // refreshSession() simultaneamente. Em vez disso, cada op trata erros de JWT
-  // expirado individualmente (isJwtExpiredError → tryRefreshToken) e ops que
-  // falham por falta de sessão ficam na outbox para o próximo drain.
-
-  // Acorda o servidor antes de drenar: se as ops ficaram pendentes durante
-  // hibernação do free tier, a 1ª op cairia no cold start (5-15s+) e estouraria
-  // timeout. Com wakeUp antes, o servidor já está respondendo quando as ops
-  // de verdade rodam — drain inteiro completa em < 2s na prática.
-  await wakeUpSupabase();
-
+  // Marca _draining ANTES de qualquer await. Antes o flag só era setado depois
+  // do wakeUpSupabase() (até 8s), abrindo uma janela em que drains concorrentes
+  // (focus + online + timer de 30s) passavam todos pelo guard e rodavam juntos.
   _draining = true;
-  console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
   try {
+    // Não verificamos a sessão via getSession() aqui — essa chamada usa o mutex
+    // interno do Supabase e bloquearia se visibilitychange estiver executando
+    // refreshSession() simultaneamente. Em vez disso, cada op trata erros de JWT
+    // expirado individualmente (isJwtExpiredError → tryRefreshToken) e ops que
+    // falham por falta de sessão ficam na outbox para o próximo drain.
+
+    // Acorda o servidor antes de drenar: se as ops ficaram pendentes durante
+    // hibernação do free tier, a 1ª op cairia no cold start (5-15s+) e estouraria
+    // timeout. Com wakeUp antes, o servidor já está respondendo quando as ops
+    // de verdade rodam — drain inteiro completa em < 2s na prática.
+    await wakeUpSupabase();
+
+    console.log(`[outbox] drenando ${ops.length} op(s) pendente(s)`);
     // Renovamos o token UMA VEZ por drain quando vemos JWT-expired OU RLS-block
     // (que pode ser efeito colateral de sessão silenciosamente expirada).
     let tokenRefreshedThisRun = false;
