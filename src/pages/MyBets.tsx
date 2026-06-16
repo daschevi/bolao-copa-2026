@@ -33,10 +33,21 @@ export function MyBets() {
   // Palpites pendentes: jogo ainda não encerrado E com os dois times definidos.
   // Jogos TBD (homeTeamId ou awayTeamId nulo) são excluídos — o usuário não tem
   // controle sobre eles e exibi-los como "pendentes" é confuso.
-  const pending = userBets.filter(b => {
-    const m = matches[b.matchId];
-    return m && !m.played && !!m.homeTeamId && !!m.awayTeamId;
-  });
+  const pending = userBets
+    .filter(b => {
+      const m = matches[b.matchId];
+      return m && !m.played && !!m.homeTeamId && !!m.awayTeamId;
+    })
+    // Ordena por data/hora do jogo (mais cedo primeiro) — facilita o
+    // acompanhamento dos próximos jogos. A chave `YYYY-MM-DDTHH:MM` é
+    // comparável lexicograficamente em ordem cronológica.
+    .sort((a, b) => {
+      const ma = matches[a.matchId];
+      const mb = matches[b.matchId];
+      const ka = `${ma?.date ?? ''}T${ma?.time ?? ''}`;
+      const kb = `${mb?.date ?? ''}T${mb?.time ?? ''}`;
+      return ka.localeCompare(kb);
+    });
   const finished = userBets.filter(b => matches[b.matchId]?.played);
 
   return (
