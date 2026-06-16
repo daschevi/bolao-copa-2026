@@ -121,6 +121,7 @@ export function Leaderboard() {
         <div className="flex flex-col gap-2">
           {ranked.map(({ entry: e, rank }) => {
             const isMe = e.profile.id === profile?.id;
+            const rankLabel = medal(rank);
             return (
               <button
                 key={e.profile.id}
@@ -132,9 +133,16 @@ export function Leaderboard() {
                 }}
                 title="Ver detalhamento da pontuação"
               >
-                {/* Posição */}
-                <div className="text-2xl w-8 text-center shrink-0 leading-none">
-                  {medal(rank)}
+                {/* Posição — largura acomoda 3 dígitos; a fonte reduz para ranks
+                    grandes para o número não invadir o avatar do usuário. */}
+                <div className="shrink-0 w-12 flex items-center justify-center leading-none">
+                  <span className={
+                    rank <= 3 ? 'text-2xl'
+                    : rankLabel.length >= 4 ? 'text-base font-bold tabular-nums'
+                    : 'text-xl font-bold tabular-nums'
+                  }>
+                    {rankLabel}
+                  </span>
                 </div>
 
                 {/* Avatar + info */}
