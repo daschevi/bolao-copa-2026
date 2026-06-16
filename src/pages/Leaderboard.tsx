@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useBetsStore } from '../store/betsStore';
 import { useTournamentStore } from '../store/tournamentStore';
 import { drainOutbox, ensureServerWarm } from '../lib/supabase';
+import { ScoreBreakdownModal } from '../components/ScoreBreakdownModal';
 import type { LeaderboardEntry } from '../types/index';
 
 export function Leaderboard() {
@@ -13,7 +14,25 @@ export function Leaderboard() {
   const [entries,    setEntries]    = useState<LeaderboardEntry[]>([]);
   const [loading,    setLoading]    = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [selected,   setSelected]   = useState<LeaderboardEntry | null>(null);
   const mountedRef = useRef(true);
+
+  // Colocação com empate (standard competition ranking: 1, 1, 3, 4, 4, 6…).
+  // entries já vem ordenado da RPC (total_points desc, exact_count desc).
+  // Empate genuíno = mesma pontuação E mesmo número de exatos (a regra de
+  // desempate seguinte é sorteio, não determinístico — ver Rules.tsx).
+  const ranked = useMemo(() => {
+    let rank = 0;
+    return entries.map((e, i) => {
+      const prev = entries[i - 1];
+      if (i > 0 && prev.totalPoints === e.totalPoints && prev.exactScores === e.exactScores) {
+        // herda o rank da entrada anterior (empate)
+      } else {
+        rank = i + 1; // posição absoluta — faz o próximo "pular" após empate
+      }
+      return { entry: e, rank };
+    });
+  }, [entries]);
 
   /**
    * Busca dados frescos via RPC get_leaderboard() — servidor agrega tudo,
@@ -63,7 +82,7 @@ export function Leaderboard() {
     return () => { mountedRef.current = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const medal = (i: number) => ['🥇', '🥈', '🥉'][i] ?? `${i + 1}º`;
+  const medal = (rank: number) => ({ 1: '🥇', 2: '🥈', 3: '🥉' }[rank] ?? `${rank}º`);
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
@@ -100,20 +119,22 @@ export function Leaderboard() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {entries.map((e, i) => {
+          {ranked.map(({ entry: e, rank }) => {
             const isMe = e.profile.id === profile?.id;
             return (
-              <div
+              <button
                 key={e.profile.id}
-                className="rounded-xl p-4 flex items-center gap-4 transition-all"
+                onClick={() => setSelected(e)}
+                className="w-full text-left rounded-xl p-4 flex items-center gap-4 transition-all hover:brightness-125 cursor-pointer"
                 style={{
                   background: isMe ? '#8300ff0D' : '#111111',
                   border: `1px solid ${isMe ? '#8300ff40' : '#1F1F1F'}`,
                 }}
+                title="Ver detalhamento da pontuação"
               >
                 {/* Posição */}
                 <div className="text-2xl w-8 text-center shrink-0 leading-none">
-                  {medal(i)}
+                  {medal(rank)}
                 </div>
 
                 {/* Avatar + info */}
@@ -160,7 +181,7 @@ export function Leaderboard() {
                   </div>
                   <div className="text-xs" style={{ color: '#4B5563' }}>pts</div>
                 </div>
-              </div>
+              </button>
             );
           })}
 
@@ -171,6 +192,11 @@ export function Leaderboard() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Detalhamento jogo a jogo ao clicar numa linha do ranking */}
+      {selected && (
+        <ScoreBreakdownModal entry={selected} onClose={() => setSelected(null)} />
       )}
     </div>
   );

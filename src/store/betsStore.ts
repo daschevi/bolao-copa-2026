@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { supabase, isSupabaseConfigured, sq, persistOp, hasPendingOutboxOpForBet } from '../lib/supabase';
-import type { Bet, LeaderboardEntry } from '../types';
+import type { Bet, LeaderboardEntry, BreakdownRow } from '../types';
 import { calcPoints } from '../types';
 import { useTournamentStore } from './tournamentStore';
 
@@ -29,6 +29,13 @@ interface BetsState {
    *     (não apagar a classificação por uma falha de rede transitória).
    */
   fetchLeaderboard: () => Promise<LeaderboardEntry[] | null>;
+  /**
+   * Detalhamento jogo a jogo de um usuário via RPC get_user_bets_breakdown.
+   * Usada pelo modal de pontuação na Classificação.
+   * Retorna BreakdownRow[] (inclusive vazio) em sucesso, ou null em falha
+   * após retries (a UI mostra erro leve / mantém o que tinha).
+   */
+  fetchUserBreakdown: (userId: string) => Promise<BreakdownRow[] | null>;
 }
 
 export const useBetsStore = create<BetsState>()(
@@ -272,6 +279,45 @@ export const useBetsStore = create<BetsState>()(
 
         console.error('[betsStore] fetchLeaderboard falhou após 3 tentativas');
         return null; // falha → caller preserva entradas atuais
+      },
+
+      fetchUserBreakdown: async (userId: string): Promise<BreakdownRow[] | null> => {
+        if (!isSupabaseConfigured) return [];
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const timeoutMs = attempt === 1 ? 10000 : 20000;
+          const { data, error } = await sq(
+            () => supabase.rpc('get_user_bets_breakdown', { p_user_id: userId }),
+            timeoutMs,
+          );
+
+          if (error) {
+            console.warn(`[betsStore] fetchUserBreakdown tentativa ${attempt}/3:`, error.message);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
+            continue;
+          }
+
+          return (data ?? []).map((row: {
+            match_id:    string;
+            bet_home:    number;
+            bet_away:    number;
+            result_home: number | null;
+            result_away: number | null;
+            points:      number;
+            played:      boolean;
+          }) => ({
+            matchId:    row.match_id,
+            betHome:    row.bet_home,
+            betAway:    row.bet_away,
+            resultHome: row.result_home,
+            resultAway: row.result_away,
+            points:     row.points,
+            played:     row.played,
+          }));
+        }
+
+        console.error('[betsStore] fetchUserBreakdown falhou após 3 tentativas');
+        return null; // falha → caller mostra erro leve
       },
     }),
     { name: 'bolao-bets', partialize: (s) => ({ bets: s.bets }) }

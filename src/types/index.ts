@@ -84,6 +84,21 @@ export interface LeaderboardEntry {
   totalBets: number;
 }
 
+/**
+ * Detalhamento jogo a jogo de um usuário (RPC get_user_bets_breakdown).
+ * `resultHome/resultAway` são null quando o jogo ainda não tem resultado.
+ * `points` segue a pontuação canônica (exato=3, resultado certo=1, senão 0).
+ */
+export interface BreakdownRow {
+  matchId: string;
+  betHome: number;
+  betAway: number;
+  resultHome: number | null;
+  resultAway: number | null;
+  points: number;
+  played: boolean;
+}
+
 export function calcPoints(
   bet: { homeScore: number; awayScore: number },
   result: { homeScore: number | null; awayScore: number | null }
