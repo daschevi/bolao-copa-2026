@@ -57,12 +57,13 @@ export function ScoreBreakdownModal({ entry, onClose }: Props) {
     return () => { cancelled = true; };
   }, [entry.profile.id, fetchUserBreakdown]);
 
-  // Apenas jogos disputados (os que geraram pontos), ordenados por pontos desc
-  // e depois pela data do jogo (cronológico).
+  // Apenas jogos disputados que PONTUARAM (3 ou 1) — jogos com +0 são ocultados
+  // por não agregarem nada ao detalhamento. Ordenados por pontos desc e depois
+  // pela data do jogo (cronológico).
   const playedRows = useMemo(() => {
     if (!rows) return [];
     return rows
-      .filter(r => r.played)
+      .filter(r => r.played && r.points > 0)
       .sort((a, b) => {
         if (b.points !== a.points) return b.points - a.points;
         const da = matches[a.matchId]?.date ?? '';
