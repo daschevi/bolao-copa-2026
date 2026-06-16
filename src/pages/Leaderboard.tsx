@@ -6,6 +6,18 @@ import { drainOutbox, ensureServerWarm } from '../lib/supabase';
 import { ScoreBreakdownModal } from '../components/ScoreBreakdownModal';
 import type { LeaderboardEntry } from '../types/index';
 
+/**
+ * Iniciais do nome: primeira letra do primeiro nome + primeira do último.
+ * Ex.: "Gabriel Daschevi" → "GD", "Carla Quevedo" → "CQ".
+ * Nome com uma só palavra → só a inicial; vazio → "?".
+ */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+
 export function Leaderboard() {
   const { profile }      = useAuthStore();
   const fetchLeaderboard = useBetsStore(s => s.fetchLeaderboard);
@@ -155,7 +167,7 @@ export function Leaderboard() {
                       border: `1px solid ${isMe ? '#8300ff40' : '#2A2A2A'}`,
                     }}
                   >
-                    {e.profile.username.charAt(0).toUpperCase()}
+                    {initials(e.profile.username)}
                   </div>
                   <div className="min-w-0">
                     <div className="font-semibold text-white flex items-center gap-1 text-sm flex-wrap">
