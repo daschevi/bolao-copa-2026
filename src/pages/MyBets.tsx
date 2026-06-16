@@ -48,7 +48,16 @@ export function MyBets() {
       const kb = `${mb?.date ?? ''}T${mb?.time ?? ''}`;
       return ka.localeCompare(kb);
     });
-  const finished = userBets.filter(b => matches[b.matchId]?.played);
+  const finished = userBets
+    .filter(b => matches[b.matchId]?.played)
+    // Mesma ordenação cronológica dos pendentes (mais cedo primeiro).
+    .sort((a, b) => {
+      const ma = matches[a.matchId];
+      const mb = matches[b.matchId];
+      const ka = `${ma?.date ?? ''}T${ma?.time ?? ''}`;
+      const kb = `${mb?.date ?? ''}T${mb?.time ?? ''}`;
+      return ka.localeCompare(kb);
+    });
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
