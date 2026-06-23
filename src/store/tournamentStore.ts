@@ -111,6 +111,17 @@ const KNOCKOUT_PROPAGATION: Array<{
 
 const initialMatches = Object.fromEntries(ALL_MATCHES.map(m => [m.id, { ...m }]));
 
+// Conjunto de slots de mata-mata definidos MANUALMENTE pelo admin (via
+// setKnockoutTeams → gravados em match_results.home_team_id/away_team_id).
+// Chave: `${matchId}:${side}` (side = 'homeTeamId' | 'awayTeamId').
+//
+// É consultado por autoPopulateKnockout para NUNCA sobrescrever/limpar um slot
+// que o admin ajustou à mão. Reconstruído a cada syncFromSupabase (a partir do
+// que vem do banco) e atualizado imediatamente no setKnockoutTeams (para cobrir
+// a janela entre o ajuste e o próximo sync). Escopo de módulo: zera no reload e
+// é repopulado pelo primeiro syncFromSupabase do boot.
+let knockoutOverrides = new Set<string>();
+
 export const useTournamentStore = create<TournamentState>()(
   persist(
     (set, get) => ({
@@ -167,6 +178,14 @@ export const useTournamentStore = create<TournamentState>()(
             [matchId]: { ...state.matches[matchId], homeTeamId, awayTeamId },
           },
         }));
+
+        // Marca/desmarca o override manual imediatamente — antes do próximo sync
+        // — para que autoPopulateKnockout não sobrescreva o ajuste do admin nesta
+        // mesma sessão (ex.: se um setResult disparar autoPopulate logo depois).
+        if (homeTeamId) knockoutOverrides.add(`${matchId}:homeTeamId`);
+        else knockoutOverrides.delete(`${matchId}:homeTeamId`);
+        if (awayTeamId) knockoutOverrides.add(`${matchId}:awayTeamId`);
+        else knockoutOverrides.delete(`${matchId}:awayTeamId`);
 
         // Persiste os times no Supabase para sincronizar entre devices
         if (isSupabaseConfigured) {
@@ -242,9 +261,15 @@ export const useTournamentStore = create<TournamentState>()(
         const updatedMatches = { ...matches };
         let changed = false;
 
+        // RECONCILIA: define o slot para teamId (string) OU limpa (null) quando a
+        // condição que o preenchia deixou de valer. Preserva overrides manuais
+        // do admin — um slot em knockoutOverrides nunca é tocado aqui.
         const assign = (matchId: string, side: 'homeTeamId' | 'awayTeamId', teamId: string | null) => {
-          if (teamId && updatedMatches[matchId] && updatedMatches[matchId][side] !== teamId) {
-            updatedMatches[matchId] = { ...updatedMatches[matchId], [side]: teamId };
+          if (!updatedMatches[matchId]) return;
+          if (knockoutOverrides.has(`${matchId}:${side}`)) return; // ajuste do admin — intocável
+          const next = teamId ?? null;
+          if (updatedMatches[matchId][side] !== next) {
+            updatedMatches[matchId] = { ...updatedMatches[matchId], [side]: next };
             changed = true;
           }
         };
@@ -278,11 +303,25 @@ export const useTournamentStore = create<TournamentState>()(
         ];
 
         direct.forEach(({ matchId, side, rank, group }) => {
-          if (!groupComplete[group]) return;
-          assign(matchId, side, standings[group]?.[rank]?.teamId ?? null);
+          // Grupo completo → classificado correspondente; incompleto → limpa (null).
+          const teamId = groupComplete[group] ? (standings[group]?.[rank]?.teamId ?? null) : null;
+          assign(matchId, side, teamId);
         });
 
-        // 3ºs lugares — só quando todos os 12 grupos estiverem concluídos
+        // 3ºs lugares — slots declarados FORA do if para poder LIMPAR (null)
+        // quando os 12 grupos não estiverem todos concluídos (reconciliação).
+        // Cada slot '3ª XYZ' tem grupos elegíveis (conforme tabela FIFA).
+        const thirdSlots: Array<{ matchId: string; eligible: string[] }> = [
+          { matchId: 'R32-2',  eligible: ['A','B','C','D','F'] },
+          { matchId: 'R32-5',  eligible: ['C','D','F','G','H'] },
+          { matchId: 'R32-7',  eligible: ['C','E','F','H','I'] },
+          { matchId: 'R32-8',  eligible: ['E','H','I','J','K'] },
+          { matchId: 'R32-9',  eligible: ['B','E','F','I','J'] },
+          { matchId: 'R32-10', eligible: ['A','E','H','I','J'] },
+          { matchId: 'R32-13', eligible: ['E','F','G','I','J'] },
+          { matchId: 'R32-15', eligible: ['D','E','I','J','L'] },
+        ];
+
         if (GROUPS.every(g => groupComplete[g])) {
           const allThird = GROUPS.map(g => ({
             group: g,
@@ -296,18 +335,6 @@ export const useTournamentStore = create<TournamentState>()(
             b.points - a.points || b.gd - a.gd || b.gf - a.gf
           );
           const qualified = ranked.slice(0, 8);
-
-          // Cada slot '3ª XYZ' tem grupos elegíveis (conforme tabela FIFA)
-          const thirdSlots: Array<{ matchId: string; eligible: string[] }> = [
-            { matchId: 'R32-2',  eligible: ['A','B','C','D','F'] },
-            { matchId: 'R32-5',  eligible: ['C','D','F','G','H'] },
-            { matchId: 'R32-7',  eligible: ['C','E','F','H','I'] },
-            { matchId: 'R32-8',  eligible: ['E','H','I','J','K'] },
-            { matchId: 'R32-9',  eligible: ['B','E','F','I','J'] },
-            { matchId: 'R32-10', eligible: ['A','E','H','I','J'] },
-            { matchId: 'R32-13', eligible: ['E','F','G','I','J'] },
-            { matchId: 'R32-15', eligible: ['D','E','I','J','L'] },
-          ];
 
           // Backtracking para garantir que todos os 8 slots sejam preenchidos.
           // O greedy falha quando escolhas iniciais bloqueiam slots posteriores.
@@ -326,7 +353,11 @@ export const useTournamentStore = create<TournamentState>()(
             return false;
           }
           findThirdMatching(0, new Set<string>());
-          thirdMatching.forEach((teamId, matchId) => assign(matchId, 'awayTeamId', teamId));
+          // Atribui os 8 slots; quem não casou recebe null (limpa).
+          thirdSlots.forEach(({ matchId }) => assign(matchId, 'awayTeamId', thirdMatching.get(matchId) ?? null));
+        } else {
+          // 12 grupos não concluídos → nenhum 3º definido: limpa os 8 slots.
+          thirdSlots.forEach(({ matchId }) => assign(matchId, 'awayTeamId', null));
         }
 
         // ── Propaga vencedores/perdedores entre todas as fases eliminatórias ──
@@ -433,6 +464,17 @@ export const useTournamentStore = create<TournamentState>()(
             return { matches: updated };
           });
 
+          // Reconstrói o conjunto de overrides manuais do admin a partir do banco
+          // (home_team_id/away_team_id em match_results vêm de setKnockoutTeams).
+          // Deve rodar ANTES do autoPopulate para que a reconciliação não apague
+          // um slot ajustado manualmente. Reconstruído do zero a cada sync.
+          const overrides = new Set<string>();
+          dbMap.forEach((r, matchId) => {
+            if (r.home_team_id) overrides.add(`${matchId}:homeTeamId`);
+            if (r.away_team_id) overrides.add(`${matchId}:awayTeamId`);
+          });
+          knockoutOverrides = overrides;
+
           // Auto-popula chaveamento com os dados sincronizados
           get().autoPopulateKnockout();
           return; // sucesso — sai do loop
@@ -443,10 +485,13 @@ export const useTournamentStore = create<TournamentState>()(
     }),
     {
       name: 'bolao-tournament-v2',
-      version: 2,
+      version: 3,
       migrate: (persisted, version): TournamentState => {
-        // version < 1 = cache gerado antes do sistema de versioning.
-        if (version < 1) return { matches: initialMatches } as unknown as TournamentState;
+        // v<3: descarta o cache de matches UMA vez (roda na reidratação/boot, não
+        // no login). Corrige o chaveamento populado por placares de teste antigos
+        // presos no localStorage; o syncFromSupabase repopula do banco. One-time:
+        // após reidratar, o store regrava como v3 e o migrate não dispara de novo.
+        if (version < 3) return { matches: initialMatches } as unknown as TournamentState;
         return persisted as unknown as TournamentState;
       },
       // Merge custom: a metadata estática (date, time, venue, slots, teams de
