@@ -193,8 +193,10 @@ export function Knockout() {
               {ROUNDS.map(round => (
                 <div key={round.stage} className="kround">
                   <div className="text-center text-xs font-bold uppercase tracking-wider mb-3" style={{ color: '#6B7280' }}>
-                    {STAGE_LABEL_FULL[round.stage]}
-                    {isAdmin && phases[round.stage as StageKey]?.visible === false && (
+                    {/* Coluna final: sem rótulo de coluna — os cards (3º Lugar / Final)
+                        já se rotulam no próprio cabeçalho, evitando confusão. */}
+                    {round.stage === 'final' ? ' ' : STAGE_LABEL_FULL[round.stage]}
+                    {isAdmin && round.stage !== 'final' && phases[round.stage as StageKey]?.visible === false && (
                       <span className="ml-1 opacity-60">🔒</span>
                     )}
                   </div>
@@ -202,19 +204,12 @@ export function Knockout() {
                     {round.order.map(id => (
                       <div key={id} className="kcell">
                         {round.stage === 'final' ? (
-                          // Final + disputa de 3º lugar empilhados na mesma célula
-                          // (centrada na coluna) — o 3º fica logo abaixo da Final.
+                          // Disputa de 3º lugar ACIMA da Final (o 3º acontece antes,
+                          // 23/jul 16h vs 22h). Cada card já mostra "3º Lugar"/"Final"
+                          // no próprio cabeçalho, então não duplicamos rótulo aqui.
                           <div className="flex flex-col items-center gap-6">
+                            {thirdMatch && stageVisible('third') && renderNode('THIRD')}
                             {renderNode(id)}
-                            {thirdMatch && stageVisible('third') && (
-                              <div className="flex flex-col items-center gap-1">
-                                <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#6B7280' }}>
-                                  {STAGE_LABEL_FULL.third}
-                                  {isAdmin && phases.third?.visible === false && <span className="ml-1 opacity-60">🔒</span>}
-                                </div>
-                                {renderNode('THIRD')}
-                              </div>
-                            )}
                           </div>
                         ) : (
                           renderNode(id)

@@ -139,6 +139,12 @@ export function MatchCard({ match, showBet = true }: Props) {
   const phaseDeadline = phaseConfig?.betsDeadline ?? null;
   const phaseMode   = phaseConfig ? resolveDeadlineMode(phaseConfig) : 'auto3d';
   const betOpen     = isBetOpen(match, phaseDeadline, phaseMode);
+  // Mensagem de encerramento condizente com o modo de prazo da fase (antes era
+  // sempre "3 dias antes", errado quando a fase usa 1h antes ou data fixa).
+  const deadlineReasonText =
+    phaseMode === 'auto1h' ? 'O prazo para palpitar era 1 hora antes do jogo.'
+    : phaseMode === 'fixed' ? 'O prazo para palpitar já encerrou.'
+    : 'O prazo para palpitar era 3 dias antes do jogo.';
   const phaseVisible = isAdmin || (phaseConfig?.visible ?? true);
   // Para fases eliminatórias, times precisam estar definidos para liberar palpite
   const teamsReady  = match.stage === 'group' || (!!match.homeTeamId && !!match.awayTeamId);
@@ -483,12 +489,20 @@ export function MatchCard({ match, showBet = true }: Props) {
                           </div>
                         )}
                       </>
+                    ) : !teamsReady ? (
+                      <>
+                        <div className="text-2xl mb-2">⏳</div>
+                        <p className="text-sm font-semibold text-white">Times a definir</p>
+                        <p className="text-xs mt-1" style={{ color: '#4B5563' }}>
+                          Você poderá palpitar quando os classificados deste confronto forem definidos.
+                        </p>
+                      </>
                     ) : (
                       <>
                         <div className="text-2xl mb-2">🔒</div>
                         <p className="text-sm font-semibold text-white">Palpites encerrados</p>
                         <p className="text-xs mt-1" style={{ color: '#4B5563' }}>
-                          O prazo para palpitar era 3 dias antes do jogo.
+                          {deadlineReasonText}
                         </p>
                       </>
                     )}
