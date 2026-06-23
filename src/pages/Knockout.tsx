@@ -127,7 +127,13 @@ export function Knockout() {
 
   // Nó da árvore/lista: o MatchCard existente (clique abre o modal de palpite),
   // restrito em largura. Fase oculta a usuário comum → card travado (🔒).
-  const Node = ({ matchId }: { matchId: string }) => {
+  //
+  // É uma FUNÇÃO de render (não um componente) de propósito: como componente
+  // definido dentro de Knockout, cada re-render criava um novo tipo e o React
+  // remontava o MatchCard — zerando o estado `open` do modal (modal piscava e
+  // fechava). Como função, o tipo retornado é sempre o MatchCard (estável), o
+  // React reconcilia por posição/key e o modal permanece aberto.
+  const renderNode = (matchId: string) => {
     const m = matches[matchId];
     if (!m) return null;
     const visible = stageVisible(m.stage as KnockoutStage);
@@ -195,24 +201,30 @@ export function Knockout() {
                   <div className="kround-body">
                     {round.order.map(id => (
                       <div key={id} className="kcell">
-                        <Node matchId={id} />
+                        {round.stage === 'final' ? (
+                          // Final + disputa de 3º lugar empilhados na mesma célula
+                          // (centrada na coluna) — o 3º fica logo abaixo da Final.
+                          <div className="flex flex-col items-center gap-6">
+                            {renderNode(id)}
+                            {thirdMatch && stageVisible('third') && (
+                              <div className="flex flex-col items-center gap-1">
+                                <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#6B7280' }}>
+                                  {STAGE_LABEL_FULL.third}
+                                  {isAdmin && phases.third?.visible === false && <span className="ml-1 opacity-60">🔒</span>}
+                                </div>
+                                {renderNode('THIRD')}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          renderNode(id)
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
               ))}
             </div>
-
-            {/* Disputa de 3º lugar — card separado abaixo da árvore */}
-            {thirdMatch && stageVisible('third') && (
-              <div className="mt-8 flex flex-col items-center gap-2">
-                <div className="text-xs font-bold uppercase tracking-wider" style={{ color: '#6B7280' }}>
-                  {STAGE_LABEL_FULL.third}
-                  {isAdmin && phases.third?.visible === false && <span className="ml-1 opacity-60">🔒</span>}
-                </div>
-                <Node matchId="THIRD" />
-              </div>
-            )}
           </div>
 
           {/* ── Mobile (< lg): abas, uma rodada por vez ─────────────────────── */}
