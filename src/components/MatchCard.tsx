@@ -5,7 +5,7 @@ import { formatMatchDate } from '../data/matches';
 import { useAuthStore } from '../store/authStore';
 import { useBetsStore } from '../store/betsStore';
 import { useTournamentStore } from '../store/tournamentStore';
-import { usePhaseSettingsStore, type StageKey } from '../store/phaseSettingsStore';
+import { usePhaseSettingsStore, resolveDeadlineMode, type StageKey, type DeadlineMode } from '../store/phaseSettingsStore';
 import { calcPoints } from '../types';
 import { Flag } from './Flag';
 
@@ -44,50 +44,52 @@ function parseDeadline(s: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+const BET_DEADLINE_1H_MS = 60 * 60 * 1000;
+
 /**
  * Prazo efetivo de palpite — paridade EXATA com o trigger do servidor
- * (check_bet_deadline, migration 010):
- *   least(deadline explícito da fase ?? kickoff − 3 dias, kickoff)
+ * (check_bet_deadline, migrations 010 + 012). Três modos por fase:
+ *   - 'auto1h' → kickoff − 1 hora
+ *   - 'fixed'  → least(deadline da fase ?? kickoff − 3 dias, kickoff)
+ *   - 'auto3d' → kickoff − 3 dias (padrão)
  *
- * O kickoff é teto ABSOLUTO: nunca aceita palpite com a bola rolando, mesmo
- * que o admin configure um deadline da fase posterior ao início do jogo. O
- * explícito pode antecipar OU estender a janela em relação ao automático
- * (3 dias antes), mas jamais ultrapassa o kickoff.
+ * O kickoff é teto ABSOLUTO no modo 'fixed': nunca aceita palpite com a bola
+ * rolando, mesmo que o admin configure um deadline posterior ao início do jogo.
  *
- * Retorna o instante (ms) em que os palpites fecham, ou:
- *   - 'closed' → fase explicitamente encerrada (phaseDeadline === '')
- *   - null     → sem referência de prazo (jogo sem data e sem deadline legível) → fail-open
+ * Retorna o instante (ms) em que os palpites fecham, ou null quando não há como
+ * determinar (jogo sem data) → fail-open.
  */
-function effectiveDeadlineMs(match: Match, phaseDeadline: string | null): number | 'closed' | null {
-  if (phaseDeadline !== null && !phaseDeadline) return 'closed';
-
+function effectiveDeadlineMs(match: Match, phaseDeadline: string | null, mode: DeadlineMode): number | null {
   const kickoff = match.date
     ? new Date(`${match.date}T${match.time ?? '00:00'}:00-03:00`)
     : null;
 
-  // Candidato: deadline explícito da fase (se legível) OU automático (kickoff − 3 dias).
-  let candidate: Date | null = phaseDeadline ? parseDeadline(phaseDeadline) : null;
-  if (!candidate && kickoff) {
-    candidate = new Date(kickoff.getTime() - BET_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
+  if (mode === 'auto1h') {
+    return kickoff ? kickoff.getTime() - BET_DEADLINE_1H_MS : null;
   }
-  if (!candidate) return null; // sem data e sem deadline legível → fail-open
 
-  // Teto absoluto do kickoff.
-  return kickoff ? Math.min(candidate.getTime(), kickoff.getTime()) : candidate.getTime();
+  if (mode === 'fixed') {
+    const d = phaseDeadline ? parseDeadline(phaseDeadline) : null;
+    // Fixo sem data legível → cai para 3 dias antes (consistente com o servidor).
+    const candidate = d ?? (kickoff ? new Date(kickoff.getTime() - BET_DEADLINE_DAYS * 24 * 60 * 60 * 1000) : null);
+    if (!candidate) return null;
+    return kickoff ? Math.min(candidate.getTime(), kickoff.getTime()) : candidate.getTime();
+  }
+
+  // 'auto3d' (padrão)
+  return kickoff ? kickoff.getTime() - BET_DEADLINE_DAYS * 24 * 60 * 60 * 1000 : null;
 }
 
 /** Retorna true se o prazo de palpite ainda está aberto (idêntico ao servidor). */
-function isBetOpen(match: Match, phaseDeadline: string | null): boolean {
-  const eff = effectiveDeadlineMs(match, phaseDeadline);
-  if (eff === 'closed') return false;
+function isBetOpen(match: Match, phaseDeadline: string | null, mode: DeadlineMode): boolean {
+  const eff = effectiveDeadlineMs(match, phaseDeadline, mode);
   if (eff === null) return true; // fail-open: nada para validar
   return Date.now() <= eff;
 }
 
 /** Formata quantos dias/horas faltam para o prazo de palpite. */
-function deadlineLabel(match: Match, phaseDeadline: string | null): string {
-  const eff = effectiveDeadlineMs(match, phaseDeadline);
-  if (eff === 'closed') return 'Palpites encerrados';
+function deadlineLabel(match: Match, phaseDeadline: string | null, mode: DeadlineMode): string {
+  const eff = effectiveDeadlineMs(match, phaseDeadline, mode);
   if (eff === null) return '';
 
   const diff = eff - Date.now();
@@ -135,7 +137,8 @@ export function MatchCard({ match, showBet = true }: Props) {
 
   const isAdmin     = profile?.isAdmin ?? false;
   const phaseDeadline = phaseConfig?.betsDeadline ?? null;
-  const betOpen     = isBetOpen(match, phaseDeadline);
+  const phaseMode   = phaseConfig ? resolveDeadlineMode(phaseConfig) : 'auto3d';
+  const betOpen     = isBetOpen(match, phaseDeadline, phaseMode);
   const phaseVisible = isAdmin || (phaseConfig?.visible ?? true);
   // Para fases eliminatórias, times precisam estar definidos para liberar palpite
   const teamsReady  = match.stage === 'group' || (!!match.homeTeamId && !!match.awayTeamId);
@@ -155,8 +158,10 @@ export function MatchCard({ match, showBet = true }: Props) {
     // O `canBet` da renderização captura `new Date()` uma única vez; se o prazo
     // expirar enquanto a aba fica aberta, a closure não é atualizada até o próximo
     // re-render. Ler direto de getState() garante o valor atual sem re-render.
-    const liveDeadline = usePhaseSettingsStore.getState().phases[match.stage as StageKey]?.betsDeadline ?? null;
-    if (!isBetOpen(match, liveDeadline)) return; // prazo expirou
+    const liveConfig   = usePhaseSettingsStore.getState().phases[match.stage as StageKey];
+    const liveDeadline = liveConfig?.betsDeadline ?? null;
+    const liveMode     = liveConfig ? resolveDeadlineMode(liveConfig) : 'auto3d';
+    if (!isBetOpen(match, liveDeadline, liveMode)) return; // prazo expirou
     if (!canBet) return;
 
     // Refresh ATIVO do token antes do write.
@@ -349,7 +354,7 @@ export function MatchCard({ match, showBet = true }: Props) {
           {/* Contador regressivo — não exibe para admin (vê as duas abas no modal) */}
           {showBet && !userBet && !isPlayed && betOpen && profile && !isAdmin && teamsReady && (
             <div className="text-xs mt-0.5" style={{ color: '#4B5563' }}>
-              ⏱ {deadlineLabel(match, phaseDeadline)}
+              ⏱ {deadlineLabel(match, phaseDeadline, phaseMode)}
             </div>
           )}
         </div>
@@ -450,7 +455,7 @@ export function MatchCard({ match, showBet = true }: Props) {
                     </button>
                     {!isAdmin && betOpen && (
                       <p className="text-center text-xs mt-2" style={{ color: '#4B5563' }}>
-                        ⏱ {deadlineLabel(match, phaseDeadline)}
+                        ⏱ {deadlineLabel(match, phaseDeadline, phaseMode)}
                       </p>
                     )}
                   </div>

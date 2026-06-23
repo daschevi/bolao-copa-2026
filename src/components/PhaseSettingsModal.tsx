@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   usePhaseSettingsStore,
-  STAGE_KEYS, STAGE_DISPLAY,
+  STAGE_KEYS, STAGE_DISPLAY, resolveDeadlineMode,
   type StageKey, type PhaseConfig,
 } from '../store/phaseSettingsStore';
 import { useTournamentStore } from '../store/tournamentStore';
@@ -39,10 +39,14 @@ export function PhaseSettingsModal({ onClose }: Props) {
   const { phases, updatePhase, savePhaseSettings, syncPhaseSettings } = usePhaseSettingsStore();
   const syncFromSupabase = useTournamentStore(s => s.syncFromSupabase);
 
-  // Rascunho local — só aplica ao store ao clicar em "Salvar"
-  const [draft, setDraft] = useState<Record<StageKey, PhaseConfig>>(
-    () => JSON.parse(JSON.stringify(phases))
-  );
+  // Rascunho local — só aplica ao store ao clicar em "Salvar".
+  // Normaliza deadlineMode no init (deriva p/ dados legados) para os rádios
+  // refletirem o estado salvo.
+  const [draft, setDraft] = useState<Record<StageKey, PhaseConfig>>(() => {
+    const clone = JSON.parse(JSON.stringify(phases)) as Record<StageKey, PhaseConfig>;
+    STAGE_KEYS.forEach(s => { clone[s].deadlineMode = resolveDeadlineMode(clone[s]); });
+    return clone;
+  });
   const [saving, setSaving]     = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved]       = useState(false);
@@ -161,7 +165,7 @@ function PhaseRow({
   config: PhaseConfig;
   onChange: (cfg: Partial<PhaseConfig>) => void;
 }) {
-  const hasCustomDeadline = config.betsDeadline !== null;
+  const mode = config.deadlineMode ?? resolveDeadlineMode(config);
 
   return (
     <div
@@ -198,8 +202,8 @@ function PhaseRow({
             <input
               type="radio"
               name={`dl-${stage}`}
-              checked={!hasCustomDeadline}
-              onChange={() => onChange({ betsDeadline: null })}
+              checked={mode === 'auto3d'}
+              onChange={() => onChange({ deadlineMode: 'auto3d', betsDeadline: null })}
               className="accent-copa-green"
             />
             <span className="text-xs text-gray-300">Automático — 3 dias antes de cada jogo</span>
@@ -209,19 +213,30 @@ function PhaseRow({
             <input
               type="radio"
               name={`dl-${stage}`}
-              checked={hasCustomDeadline}
-              onChange={() => onChange({ betsDeadline: config.betsDeadline ?? '' })}
+              checked={mode === 'auto1h'}
+              onChange={() => onChange({ deadlineMode: 'auto1h', betsDeadline: null })}
+              className="accent-copa-green"
+            />
+            <span className="text-xs text-gray-300">1 hora antes de cada jogo</span>
+          </label>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name={`dl-${stage}`}
+              checked={mode === 'fixed'}
+              onChange={() => onChange({ deadlineMode: 'fixed', betsDeadline: config.betsDeadline ?? '' })}
               className="accent-copa-green"
             />
             <span className="text-xs text-gray-300">Data e hora fixas (horário de Brasília)</span>
           </label>
         </div>
 
-        {hasCustomDeadline && (
+        {mode === 'fixed' && (
           <input
             type="datetime-local"
             value={toDatetimeLocal(config.betsDeadline)}
-            onChange={e => onChange({ betsDeadline: e.target.value || null })}
+            onChange={e => onChange({ deadlineMode: 'fixed', betsDeadline: e.target.value || null })}
             className="input text-xs mt-1"
           />
         )}

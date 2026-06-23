@@ -38,10 +38,13 @@ create table public.match_results (
 );
 
 -- Phase settings (admin only — visibility and bet deadlines per stage)
+-- deadline_mode: 'auto3d' (3 dias antes), 'auto1h' (1 hora antes) ou 'fixed'
+-- (usa bets_deadline). NULL = legado (deriva de bets_deadline). Ver migration 012.
 create table public.phase_settings (
   stage text primary key,
   visible boolean not null default true,
   bets_deadline timestamptz,
+  deadline_mode text,
   updated_at timestamptz default now()
 );
 

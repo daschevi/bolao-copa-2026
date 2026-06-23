@@ -17,10 +17,30 @@ export const STAGE_DISPLAY: Record<StageKey, string> = {
   final: 'Final',
 };
 
+/**
+ * Modo de prazo de palpite de uma fase:
+ *   'auto3d' → 3 dias antes de cada jogo (kickoff − 3 dias) — padrão
+ *   'auto1h' → 1 hora antes de cada jogo (kickoff − 1 hora)
+ *   'fixed'  → data/hora fixa (betsDeadline), limitada ao kickoff
+ */
+export type DeadlineMode = 'auto3d' | 'auto1h' | 'fixed';
+
 export interface PhaseConfig {
   visible: boolean;
-  /** 'YYYY-MM-DDTHH:mm' em horário de Brasília (BRT). null = automático (3 dias antes de cada jogo). */
+  /** 'YYYY-MM-DDTHH:mm' em horário de Brasília (BRT). Só usado quando deadlineMode = 'fixed'. */
   betsDeadline: string | null;
+  /** Modo do prazo. Opcional para retrocompat com cache/linhas antigas — use resolveDeadlineMode. */
+  deadlineMode?: DeadlineMode;
+}
+
+/**
+ * Resolve o modo de prazo, derivando para dados legados (sem deadlineMode):
+ * betsDeadline preenchido → 'fixed'; vazio → 'auto3d'. Mantém cliente, store e
+ * trigger do servidor com a MESMA interpretação.
+ */
+export function resolveDeadlineMode(cfg: { deadlineMode?: DeadlineMode; betsDeadline: string | null }): DeadlineMode {
+  if (cfg.deadlineMode) return cfg.deadlineMode;
+  return cfg.betsDeadline != null ? 'fixed' : 'auto3d';
 }
 
 // ── Estado inicial (tudo visível, prazo automático) ──────────────────────────
@@ -80,12 +100,26 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
           if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return s;
           return `${s.slice(0, 16)}:00-03:00`;
         };
-        const rows = STAGE_KEYS.map(stage => ({
-          stage,
-          visible:       phases[stage].visible,
-          bets_deadline: toIsoBrt(phases[stage].betsDeadline),
-          updated_at:    new Date().toISOString(),
-        }));
+        // includeMode=false é fallback p/ bancos sem a coluna deadline_mode
+        // (migration 012 ainda não aplicada): mantém o save funcionando para
+        // visível/fixo/auto-3d; só o modo 'auto1h' não persiste até migrar.
+        const buildRows = (includeMode: boolean) => STAGE_KEYS.map(stage => {
+          const cfg  = phases[stage];
+          const mode = resolveDeadlineMode(cfg);
+          const row: Record<string, unknown> = {
+            stage,
+            visible:       cfg.visible,
+            // bets_deadline só faz sentido no modo 'fixed'; nos relativos vai null.
+            bets_deadline: mode === 'fixed' ? toIsoBrt(cfg.betsDeadline) : null,
+            updated_at:    new Date().toISOString(),
+          };
+          if (includeMode) row.deadline_mode = mode;
+          return row;
+        });
+
+        let includeMode = true;
+        let triedWithoutMode = false;
+        let rows = buildRows(includeMode);
 
         // Retry até 3× com backoff — cobre cold start do Supabase free tier.
         // Usa Promise.race direto (não sq()) para capturar o objeto de erro completo
@@ -120,8 +154,18 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
               hint:    err.hint,
             });
 
-            // Erros permanentes — re-tentar não vai resolver
             const lc = lastError.toLowerCase();
+
+            // Coluna deadline_mode ausente (migration 012 pendente) → re-tenta sem ela.
+            if (includeMode && !triedWithoutMode && lc.includes('deadline_mode')) {
+              console.warn('[phaseSettings] coluna deadline_mode ausente — aplique a migration 012. Salvando sem o modo por ora (auto1h não persistirá).');
+              includeMode = false;
+              triedWithoutMode = true;
+              rows = buildRows(false);
+              continue; // re-tenta imediatamente sem a coluna
+            }
+
+            // Erros permanentes — re-tentar não vai resolver
             if (
               /row-level security|permission denied/.test(lc) ||
               /relation .* does not exist/.test(lc) ||
@@ -165,12 +209,15 @@ export const usePhaseSettingsStore = create<PhaseSettingsState>()(
 
           set(state => {
             const phases = { ...state.phases };
-            (data as { stage: string; visible: boolean; bets_deadline: string | null }[])
+            (data as { stage: string; visible: boolean; bets_deadline: string | null; deadline_mode?: string | null }[])
               .forEach(r => {
                 if (STAGE_KEYS.includes(r.stage as StageKey)) {
                   phases[r.stage as StageKey] = {
                     visible:      r.visible,
                     betsDeadline: r.bets_deadline ?? null,
+                    // deadline_mode pode vir undefined (coluna ainda não criada) → deriva.
+                    deadlineMode: (r.deadline_mode as DeadlineMode | null | undefined)
+                      ?? (r.bets_deadline ? 'fixed' : 'auto3d'),
                   };
                 }
               });
