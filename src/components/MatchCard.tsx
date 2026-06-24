@@ -249,9 +249,9 @@ export function MatchCard({ match, showBet = true }: Props) {
       <button
         onClick={openModal}
         className="card w-full text-left transition-colors"
-        style={{ borderColor: open ? '#22C55E' : undefined }}
-        onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#22C55E55'}
-        onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#1F1F1F'}
+        style={{ borderColor: open ? '#8300ff' : undefined }}
+        onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#8300ff44'}
+        onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = open ? '#8300ff' : '#1F1F1F'}
       >
         {/* Header */}
         <div className="text-center mb-3 space-y-0.5">

@@ -222,22 +222,48 @@ export function Knockout() {
             </div>
           </div>
 
-          {/* ── Mobile (< lg): abas, uma rodada por vez ─────────────────────── */}
+          {/* ── Mobile (< lg): navegação com setas ──────────────────────────── */}
           <div className="lg:hidden">
-            <div className="flex gap-2 mb-6 overflow-x-auto pb-1">
-              {tabs.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => setActiveStage(s.id)}
-                  className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${effectiveStage === s.id ? 'bg-copa-green text-white' : 'bg-slate-800 text-gray-400 hover:text-copa-green'}`}
-                >
-                  {s.label}
-                  {isAdmin && phases[s.id as StageKey]?.visible === false && (
-                    <span className="ml-1 text-[10px] opacity-60">🔒</span>
-                  )}
-                </button>
-              ))}
-            </div>
+            {(() => {
+              const currentIdx = tabs.findIndex(t => t.id === effectiveStage);
+              const prevStage  = () => { if (currentIdx > 0) setActiveStage(tabs[currentIdx - 1].id); };
+              const nextStage  = () => { if (currentIdx < tabs.length - 1) setActiveStage(tabs[currentIdx + 1].id); };
+              const currentTab = tabs[currentIdx] ?? tabs[0];
+              return (
+                <div className="flex items-center justify-between mb-6 gap-3">
+                  <button
+                    onClick={prevStage}
+                    disabled={currentIdx <= 0}
+                    className="w-10 h-10 flex items-center justify-center rounded-full transition-colors disabled:opacity-25"
+                    style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', color: currentIdx > 0 ? '#8300ff' : '#6B7280' }}
+                  >
+                    ◀
+                  </button>
+
+                  <div className="flex-1 text-center">
+                    <div className="font-bold text-white text-base leading-tight">
+                      {currentTab ? STAGE_LABEL_FULL[currentTab.id] : ''}
+                      {isAdmin && currentTab && phases[currentTab.id as StageKey]?.visible === false && (
+                        <span className="ml-1 text-sm opacity-60">🔒</span>
+                      )}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
+                      {currentIdx + 1} / {tabs.length}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={nextStage}
+                    disabled={currentIdx >= tabs.length - 1}
+                    className="w-10 h-10 flex items-center justify-center rounded-full transition-colors disabled:opacity-25"
+                    style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', color: currentIdx < tabs.length - 1 ? '#8300ff' : '#6B7280' }}
+                  >
+                    ▶
+                  </button>
+                </div>
+              );
+            })()}
+
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {stageMatches.map(m => (
