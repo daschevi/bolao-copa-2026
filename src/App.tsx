@@ -1,4 +1,10 @@
 import { useEffect } from 'react';
+
+// A partir de 27/jun/2026 a fase de grupos encerra — redireciona para chaveamento.
+const KNOCKOUT_START = new Date('2026-06-27T00:00:00-03:00');
+function defaultHome() {
+  return Date.now() >= KNOCKOUT_START.getTime() ? '/chaveamento' : '/grupos';
+}
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Login } from './pages/Login';
@@ -212,7 +218,7 @@ export default function App() {
       <HashRouter>
         {profile && <Navbar />}
         <Routes>
-          <Route path="/login"         element={profile ? <Navigate to="/grupos" replace /> : <Login />} />
+          <Route path="/login"         element={profile ? <Navigate to={defaultHome()} replace /> : <Login />} />
           {/* /cadastro redirecionado — login apenas via Google corporativo */}
           <Route path="/cadastro"      element={<Navigate to="/login" replace />} />
           <Route path="/grupos"        element={<RequireAuth><Groups /></RequireAuth>} />
@@ -221,7 +227,7 @@ export default function App() {
           <Route path="/classificacao" element={<RequireAuth><Leaderboard /></RequireAuth>} />
           <Route path="/regras"        element={<RequireAuth><Rules /></RequireAuth>} />
           <Route path="/auditoria"     element={<RequireAuth><AuditLog /></RequireAuth>} />
-          <Route path="*"              element={<Navigate to={profile ? '/grupos' : '/login'} replace />} />
+          <Route path="*"              element={<Navigate to={profile ? defaultHome() : '/login'} replace />} />
         </Routes>
       </HashRouter>
 
