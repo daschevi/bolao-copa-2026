@@ -176,26 +176,26 @@ const KNOCKOUT_MATCHES: Match[] = [
   { ...tbd, id: 'R32-14', stage: 'r32', homeFromSlot: '1J',       awayFromSlot: '2H',       date: '2026-07-03', time: '19:00', venue: V.HARDROCK  },
   { ...tbd, id: 'R32-15', stage: 'r32', homeFromSlot: '1K',       awayFromSlot: '3ª DEIJL', date: '2026-07-03', time: '22:30', venue: V.ARROW     },
   { ...tbd, id: 'R32-16', stage: 'r32', homeFromSlot: '2D',       awayFromSlot: '2G',       date: '2026-07-03', time: '15:00', venue: V.ATT       },
-  // ── Oitavas de Final (9–12 jul) ──────────────────────────────────────────
-  { ...tbd, id: 'R16-1',  stage: 'r16', homeFromSlot: 'W R32-2',  awayFromSlot: 'W R32-5',  date: '2026-07-09', time: '18:00', venue: V.METLIFE   },
-  { ...tbd, id: 'R16-2',  stage: 'r16', homeFromSlot: 'W R32-1',  awayFromSlot: 'W R32-3',  date: '2026-07-09', time: '22:00', venue: V.LUMEN     },
-  { ...tbd, id: 'R16-3',  stage: 'r16', homeFromSlot: 'W R32-4',  awayFromSlot: 'W R32-6',  date: '2026-07-10', time: '18:00', venue: V.SOFI      },
-  { ...tbd, id: 'R16-4',  stage: 'r16', homeFromSlot: 'W R32-7',  awayFromSlot: 'W R32-8',  date: '2026-07-10', time: '22:00', venue: V.AZTECA    },
-  { ...tbd, id: 'R16-5',  stage: 'r16', homeFromSlot: 'W R32-11', awayFromSlot: 'W R32-12', date: '2026-07-11', time: '18:00', venue: V.ATT       },
-  { ...tbd, id: 'R16-6',  stage: 'r16', homeFromSlot: 'W R32-9',  awayFromSlot: 'W R32-10', date: '2026-07-11', time: '22:00', venue: V.LEVIS  },
-  { ...tbd, id: 'R16-7',  stage: 'r16', homeFromSlot: 'W R32-14', awayFromSlot: 'W R32-16', date: '2026-07-12', time: '18:00', venue: V.MERCEDES  },
-  { ...tbd, id: 'R16-8',  stage: 'r16', homeFromSlot: 'W R32-13', awayFromSlot: 'W R32-15', date: '2026-07-12', time: '22:00', venue: V.HARDROCK  },
-  // ── Quartas de Final (15–16 jul) ─────────────────────────────────────────
-  { ...tbd, id: 'QF-1',   stage: 'qf',  homeFromSlot: 'W R16-1',  awayFromSlot: 'W R16-2',  date: '2026-07-15', time: '22:00', venue: V.METLIFE   },
-  { ...tbd, id: 'QF-2',   stage: 'qf',  homeFromSlot: 'W R16-5',  awayFromSlot: 'W R16-6',  date: '2026-07-15', time: '18:00', venue: V.ATT       },
-  { ...tbd, id: 'QF-3',   stage: 'qf',  homeFromSlot: 'W R16-3',  awayFromSlot: 'W R16-4',  date: '2026-07-16', time: '18:00', venue: V.SOFI      },
-  { ...tbd, id: 'QF-4',   stage: 'qf',  homeFromSlot: 'W R16-7',  awayFromSlot: 'W R16-8',  date: '2026-07-16', time: '22:00', venue: V.LEVIS  },
-  // ── Semifinais (19–20 jul) ───────────────────────────────────────────────
-  { ...tbd, id: 'SF-1',   stage: 'sf',  homeFromSlot: 'W QF-1',   awayFromSlot: 'W QF-2',   date: '2026-07-19', time: '22:00', venue: V.ATT       },
-  { ...tbd, id: 'SF-2',   stage: 'sf',  homeFromSlot: 'W QF-3',   awayFromSlot: 'W QF-4',   date: '2026-07-20', time: '22:00', venue: V.LEVIS  },
+  // ── Oitavas de Final (4–7 jul) ───────────────────────────────────────────
+  { ...tbd, id: 'R16-1',  stage: 'r16', homeFromSlot: 'W R32-2',  awayFromSlot: 'W R32-5',  date: '2026-07-04', time: '18:00', venue: V.LINCOLN   },
+  { ...tbd, id: 'R16-2',  stage: 'r16', homeFromSlot: 'W R32-1',  awayFromSlot: 'W R32-3',  date: '2026-07-04', time: '14:00', venue: V.NRG       },
+  { ...tbd, id: 'R16-3',  stage: 'r16', homeFromSlot: 'W R32-4',  awayFromSlot: 'W R32-6',  date: '2026-07-05', time: '17:00', venue: V.METLIFE   },
+  { ...tbd, id: 'R16-4',  stage: 'r16', homeFromSlot: 'W R32-7',  awayFromSlot: 'W R32-8',  date: '2026-07-05', time: '21:00', venue: V.AZTECA    },
+  { ...tbd, id: 'R16-5',  stage: 'r16', homeFromSlot: 'W R32-11', awayFromSlot: 'W R32-12', date: '2026-07-06', time: '16:00', venue: V.ATT       },
+  { ...tbd, id: 'R16-6',  stage: 'r16', homeFromSlot: 'W R32-9',  awayFromSlot: 'W R32-10', date: '2026-07-06', time: '21:00', venue: V.LUMEN     },
+  { ...tbd, id: 'R16-7',  stage: 'r16', homeFromSlot: 'W R32-14', awayFromSlot: 'W R32-16', date: '2026-07-07', time: '13:00', venue: V.MERCEDES  },
+  { ...tbd, id: 'R16-8',  stage: 'r16', homeFromSlot: 'W R32-13', awayFromSlot: 'W R32-15', date: '2026-07-07', time: '17:00', venue: V.BCPLACE   },
+  // ── Quartas de Final (9–11 jul) ──────────────────────────────────────────
+  { ...tbd, id: 'QF-1',   stage: 'qf',  homeFromSlot: 'W R16-1',  awayFromSlot: 'W R16-2',  date: '2026-07-09', time: '17:00', venue: V.GILLETTE  },
+  { ...tbd, id: 'QF-2',   stage: 'qf',  homeFromSlot: 'W R16-5',  awayFromSlot: 'W R16-6',  date: '2026-07-10', time: '16:00', venue: V.SOFI      },
+  { ...tbd, id: 'QF-3',   stage: 'qf',  homeFromSlot: 'W R16-3',  awayFromSlot: 'W R16-4',  date: '2026-07-11', time: '18:00', venue: V.HARDROCK  },
+  { ...tbd, id: 'QF-4',   stage: 'qf',  homeFromSlot: 'W R16-7',  awayFromSlot: 'W R16-8',  date: '2026-07-11', time: '22:00', venue: V.ARROW     },
+  // ── Semifinais (14–15 jul) ───────────────────────────────────────────────
+  { ...tbd, id: 'SF-1',   stage: 'sf',  homeFromSlot: 'W QF-1',   awayFromSlot: 'W QF-2',   date: '2026-07-14', time: '16:00', venue: V.ATT       },
+  { ...tbd, id: 'SF-2',   stage: 'sf',  homeFromSlot: 'W QF-3',   awayFromSlot: 'W QF-4',   date: '2026-07-15', time: '16:00', venue: V.MERCEDES  },
   // ── 3º Lugar / Final ────────────────────────────────────────────────────
-  { ...tbd, id: 'THIRD',  stage: 'third', homeFromSlot: 'L SF-1', awayFromSlot: 'L SF-2',   date: '2026-07-23', time: '16:00', venue: V.HARDROCK  },
-  { ...tbd, id: 'FINAL',  stage: 'final', homeFromSlot: 'W SF-1', awayFromSlot: 'W SF-2',   date: '2026-07-23', time: '22:00', venue: V.METLIFE   },
+  { ...tbd, id: 'THIRD',  stage: 'third', homeFromSlot: 'L SF-1', awayFromSlot: 'L SF-2',   date: '2026-07-18', time: '18:00', venue: V.HARDROCK  },
+  { ...tbd, id: 'FINAL',  stage: 'final', homeFromSlot: 'W SF-1', awayFromSlot: 'W SF-2',   date: '2026-07-19', time: '16:00', venue: V.METLIFE   },
 ];
 
 export const ALL_MATCHES: Match[] = [...GROUP_MATCHES, ...KNOCKOUT_MATCHES];
